@@ -5,9 +5,10 @@ import MessageBubble from "./MessageBubble";
 import ModeSelector from "./ModeSelector";
 import type { ChatMode, ReasoningStrength } from "../lib/api";
 import SourceDisplay from "./SourceDisplay";
-import { chatApi, getSession } from "../lib/api";
-import { analyzeCrossReasoning, type CrossReasoningReport } from "../lib/cross-reasoning";
-import { submitFeedback, type FeedbackType, type FeedbackTag } from "../lib/feedback";
+import { chatApi, getSession, submitFeedback } from "../lib/api";
+import type { FeedbackType as ApiFeedbackType, FeedbackTag as ApiFeedbackTag, FeedbackCreate } from "../lib/api";
+import { analyzeCrossReasoning } from "../lib/cross-reasoning";
+import type { CrossReasoningReport } from "../lib/cross-reasoning";
 
 interface ChatInterfaceProps {
   sessionId?: string;
@@ -20,6 +21,14 @@ interface Message {
   sources?: string[];
 }
 
+const FEEDBACK_TAGS: { value: ApiFeedbackTag; label: string }[] = [
+  { value: "wrong_source", label: "부정확" },
+  { value: "irrelevant", label: "관련 없음" },
+  { value: "incomplete", label: "불완전" },
+  { value: "hallucination", label: "환각" },
+  { value: "outdated", label: "구식 정보" },
+];
+
 export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -30,15 +39,15 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   const [crossAnalysis, setCrossAnalysis] = useState<CrossReasoningReport | null>(null);
   const [isCrossAnalyzing, setIsCrossAnalyzing] = useState(false);
   const [showCrossResult, setShowCrossResult] = useState(false);
-  const [feedbackGiven, setFeedbackGiven] = useState<Record<number, FeedbackType>>({});
+  const [feedbackGiven, setFeedbackGiven] = useState<Record<number, ApiFeedbackType>>({});
   const [showFeedbackTags, setShowFeedbackTags] = useState<number | null>(null);
   const [feedbackComment, setFeedbackComment] = useState("");
+  const [selectedTags, setSelectedTags] = useState<ApiFeedbackTag[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 세션이 변경될 때 메시지 로드
   useEffect(() => {
     if (sessionId) {
-      // TODO: 세션 메시지 로드
       loadSessionMessages(sessionId);
     }
   }, [sessionId]);
@@ -90,7 +99,6 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
 
       setMessages((prev) => [...prev, aiMessage]);
 
-      // 새 세션이 생성된 경우 session_id를 상위로 전달
       if (!sessionId && response.session_id && onSessionStart) {
         onSessionStart(response.session_id);
       }
@@ -136,6 +144,48 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
     }
   };
 
+  const handleFeedback = async (
+    messageIndex: number,
+    feedbackType: ApiFeedbackType,
+    messageContent: string
+  ) => {
+    if (feedbackGiven[messageIndex]) return;
+
+    if (feedbackType === "thumbs_down") {
+      setShowFeedbackTags(messageIndex);
+      setSelectedTags([]);
+      setFeedbackComment("");
+      return;
+    }
+
+    // 긍정 피드백은 즉시 전송
+    setFeedbackGiven((prev) => ({ ...prev, [messageIndex]: feedbackType }));
+    try {
+      await submitFeedback({
+        session_id: sessionId || "anonymous",
+        feedback_type: feedbackType,
+      } as FeedbackCreate);
+    } catch (error) {
+      console.error("Failed to submit feedback:", error);
+    }
+  };
+
+  const handleSubmitNegativeFeedback = async (messageIndex: number) => {
+    setFeedbackGiven((prev) => ({ ...prev, [messageIndex]: "thumbs_down" }));
+    setShowFeedbackTags(null);
+
+    try {
+      await submitFeedback({
+        session_id: sessionId || "anonymous",
+        feedback_type: "thumbs_down",
+        tags: selectedTags,
+        comment: feedbackComment || undefined,
+      } as FeedbackCreate);
+    } catch (error) {
+      console.error("Failed to submit negative feedback:", error);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -153,6 +203,83 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                   isOpen={sourceOpen}
                   onToggle={() => setSourceOpen(!sourceOpen)}
                 />
+              )}
+              {/* AI 응답에만 피드백 버튼 표시 */}
+              {message.role === "assistant" && !isLoading && (
+                <div className="flex items-center gap-2 mt-1 ml-2">
+                  {feedbackGiven[index] ? (
+                    <span className="text-xs text-gray-400">
+                      {feedbackGiven[index] === "thumbs_up" ? "👍 피드백 감사합니다" : "👎 피드백 감사합니다"}
+                    </span>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => handleFeedback(index, "thumbs_up", message.content)}
+                        className="text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 hover:text-green-600 transition-colors"
+                        title="도움이 되었어요"
+                      >
+                        👍
+                      </button>
+                      <button
+                        onClick={() => handleFeedback(index, "thumbs_down", message.content)}
+                        className="text-sm px-2 py-1 rounded hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-500 hover:text-red-600 transition-colors"
+                        title="개선이 필요해요"
+                      >
+                        👎
+                      </button>
+                    </>
+                  )}
+                  {/* 부정 피드백 태그 선택 UI */}
+                  {showFeedbackTags === index && (
+                    <div className="ml-2 p-3 bg-red-50 dark:bg-gray-800 rounded-lg border border-red-200 dark:border-gray-600">
+                      <p className="text-xs font-medium text-red-700 dark:text-red-300 mb-2">
+                        어떤 점이 아쉬운가요?
+                      </p>
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {FEEDBACK_TAGS.map((tag) => (
+                          <button
+                            key={tag.value}
+                            onClick={() =>
+                              setSelectedTags((prev) =>
+                                prev.includes(tag.value)
+                                  ? prev.filter((t) => t !== tag.value)
+                                  : [...prev, tag.value]
+                              )
+                            }
+                            className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                              selectedTags.includes(tag.value)
+                                ? "bg-red-200 text-red-800 border-red-400 dark:bg-red-700 dark:text-red-100 dark:border-red-500"
+                                : "bg-white text-gray-600 border-gray-300 hover:bg-gray-100 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-500"
+                            }`}
+                          >
+                            {tag.label}
+                          </button>
+                        ))}
+                      </div>
+                      <textarea
+                        value={feedbackComment}
+                        onChange={(e) => setFeedbackComment(e.target.value)}
+                        placeholder="추가 의견을 남겨주세요 (선택사항)"
+                        className="w-full text-xs rounded border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white px-2 py-1 mb-2 resize-none"
+                        rows={2}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleSubmitNegativeFeedback(index)}
+                          className="text-xs px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                        >
+                          제출
+                        </button>
+                        <button
+                          onClick={() => setShowFeedbackTags(null)}
+                          className="text-xs px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 transition-colors"
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           ))
@@ -233,14 +360,14 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                       모순/충돌 지점
                     </summary>
                     <div className="mt-1 space-y-1">
-                      {crossAnalysis.conflicts.map((c, i) => (
+                      {crossAnalysis.conflicts.map((c: any, i: number) => (
                         <div key={i} className="pl-2 border-l-2 border-red-300 dark:border-red-600">
                           <p className="font-medium">{c.description}</p>
                           <p className="text-xs text-gray-600 dark:text-gray-400">
-                            {c.document_a}: {c.claim_a.slice(0, 80)}...
+                            {c.document_a}: {String(c.claim_a).slice(0, 80)}...
                           </p>
                           <p className="text-xs text-gray-600 dark:text-gray-400">
-                            {c.document_b}: {c.claim_b.slice(0, 80)}...
+                            {c.document_b}: {String(c.claim_b).slice(0, 80)}...
                           </p>
                         </div>
                       ))}
@@ -253,11 +380,11 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                       합의/일치 지점
                     </summary>
                     <div className="mt-1 space-y-1">
-                      {crossAnalysis.agreements.map((a, i) => (
+                      {crossAnalysis.agreements.map((a: any, i: number) => (
                         <div key={i} className="pl-2 border-l-2 border-green-300 dark:border-green-600">
                           <p className="font-medium">{a.theme}</p>
                           <p className="text-xs text-gray-600 dark:text-gray-400">
-                            {a.description.slice(0, 100)}... (출처: {a.documents.join(", ")})
+                            {String(a.description).slice(0, 100)}... (출처: {a.documents.join(", ")})
                           </p>
                         </div>
                       ))}
