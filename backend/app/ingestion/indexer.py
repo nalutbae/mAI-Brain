@@ -26,6 +26,8 @@ from app.core.embedding import EmbeddingProvider, EmbeddingResult, get_embedding
 from app.core.qdrant import QdrantManager, get_qdrant
 from app.ingestion.chunker import Chunk, chunk_text
 from app.ingestion.parser import ExtractResult, extract_text
+from app.models.chunking import ChunkingProfile
+from app.core.chunker_profiles import chunk_with_profile, get_profile_store
 from app.models.document import IndexResult, IndexingStatus
 
 logger = logging.getLogger(__name__)
@@ -157,6 +159,7 @@ def index_document(
     embedding_provider: Optional[EmbeddingProvider] = None,
     qdrant: Optional[QdrantManager] = None,
     tracker: Optional[IndexingTracker] = None,
+    profile_name: Optional[str] = None,
 ) -> IndexResult:
     """단일 문서 인덱싱.
 
@@ -171,6 +174,7 @@ def index_document(
         embedding_provider: 임베딩 제공자 (None이면 기본 인스턴스)
         qdrant: Qdrant 관리자 (None이면 기본 인스턴스)
         tracker: 상태 추적기 (None이면 기본 인스턴스)
+        profile_name: 청킹 프로파일 이름 (None이면 기본 설정 사용)
 
     Returns:
         IndexResult: 인덱싱 결과
@@ -190,15 +194,31 @@ def index_document(
         logger.info("  [1/4] 텍스트 추출: %s", filename)
         extracted: ExtractResult = extract_text(file_path)
 
-        # 2. 청킹
-        settings = get_settings()
-        logger.info("  [2/4] 청킹: chunk_size=%d, overlap=%d", settings.chunk_size, settings.chunk_overlap)
-        chunks: list[Chunk] = chunk_text(
-            extracted.text,
-            extracted.metadata,
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
-        )
+        # 2. 청킹 (프로파일 기반)
+        profile = None
+        if profile_name:
+            profile_store = get_profile_store()
+            profile = profile_store.get_by_name(profile_name)
+
+        if profile:
+            logger.info(
+                "  [2/4] 청킹: profile=%s, strategy=%s, chunk_size=%d",
+                profile.name, profile.strategy, profile.chunk_size,
+            )
+            chunks: list[Chunk] = chunk_with_profile(
+                extracted.text,
+                extracted.metadata,
+                profile=profile,
+            )
+        else:
+            settings = get_settings()
+            logger.info("  [2/4] 청킹: 기본 설정, chunk_size=%d, overlap=%d", settings.chunk_size, settings.chunk_overlap)
+            chunks: list[Chunk] = chunk_text(
+                extracted.text,
+                extracted.metadata,
+                chunk_size=settings.chunk_size,
+                chunk_overlap=settings.chunk_overlap,
+            )
 
         if not chunks:
             logger.warning("  청크가 생성되지 않음: %s", filename)

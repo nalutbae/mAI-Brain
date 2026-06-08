@@ -1,8 +1,6 @@
-"""mAI-Brain — FastAPI 애플리케이션 진입점"""
+"""mAI-Brain — FastAPI 애플리케이션 진입점
 
-- CORS 미들웨어 설정
-- API 라우터 등록
-- 헬스체크 엔드포인트
+CORS 미들웨어 설정, API 라우터 등록, 헬스체크 엔드포인트
 """
 
 import asyncio
@@ -88,8 +86,9 @@ async def root():
 from app.api import documents
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 
-from app.api import chat, evaluation, sessions, cross_reasoning
+from app.api import chat, evaluation, sessions, cross_reasoning, chunking
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluation"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(cross_reasoning.router, prefix="/api/cross-reasoning", tags=["cross-reasoning"])
+app.include_router(chunking.router, prefix="/api/chunking", tags=["chunking"])
