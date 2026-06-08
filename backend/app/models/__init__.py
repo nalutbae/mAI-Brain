@@ -1,0 +1,1 @@
+"""mAI-Brain AI 챗봇 — Pydantic 모델 패키지"""

@@ -1,0 +1,60 @@
+# mAI-Brain — 도메인 특화 RAG 챗봇 프레임워크
+#
+# 사용법:
+#   문서 준비:     data/uploads/ 디렉토리에 PDF/EPUB/TXT 복사
+#   전체 스택 실행: docker compose up -d --build
+#   중지:          docker compose down
+
+services:
+  # ── Qdrant 벡터 DB ──────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: mai-qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - ./data/qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  # ── FastAPI 백엔드 ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mai-backend
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/uploads:/data/uploads
+    depends_on:
+      - qdrant
+    environment:
+      - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-api}
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-mai_brain_documents}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - LLM_PROVIDER=${LLM_PROVIDER:-deepseek}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DEEPSEEK_BASE_URL=${DEEPSEEK_BASE_URL:-https://api.deepseek.com/v1}
+      - DEEPSEEK_MODEL=${DEEPSEEK_MODEL:-deepseek-chat}
+      - APP_NAME=${APP_NAME:-mAI-Brain}
+      - UPLOAD_DIR=/data/uploads
+    restart: unless-stopped
+
+  # ── Next.js 프론트엔드 ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: mai-frontend
+    ports:
+      - "${FRONTEND_PORT:-3001}:3000"
+    depends_on:
+      - backend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_APP_NAME=${APP_NAME:-mAI-Brain}
+    restart: unless-stopped

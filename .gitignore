@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+*.egg
+.venv/
+venv/
+
+# 환경변수 (시크릿)
+.env
+!.env.example
+
+# 데이터/런타임
+data/backups/
+data/uploads/
+data/qdrant_storage/
+qdrant_storage/
+logs/
+*.db
+*.sqlite
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Next.js
+frontend/.next/
+frontend/out/
+frontend/node_modules/
+
+# Docker
+docker-compose.override.yml
+
+# 테스트 아티팩트
+watch_dir/
