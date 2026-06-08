@@ -99,7 +99,7 @@ from app.api import (
     evaluation,
     feedback,
     sessions,
-    settings,
+    settings as settings_api,
     voice,
     widget,
     workspace,
@@ -110,7 +110,7 @@ app.include_router(cross_reasoning.router, prefix="/api/cross-reasoning", tags=[
 app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluation"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
-app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
+app.include_router(settings_api.router, prefix="/api/settings", tags=["settings"])
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(widget.router, prefix="/api/widget", tags=["widget"])
 app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])
