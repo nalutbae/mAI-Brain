@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import ThemeToggle from "./ThemeToggle";
 
 export default function NavBar() {
   const pathname = usePathname();
@@ -38,6 +39,9 @@ export default function NavBar() {
           {link.label}
         </Link>
       ))}
+      {/* spacer — 토글 버튼을 오른쪽으로 밀기 */}
+      <div className="flex-1" />
+      <ThemeToggle />
     </nav>
   );
 }
