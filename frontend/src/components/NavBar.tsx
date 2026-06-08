@@ -9,6 +9,7 @@ export default function NavBar() {
   const links = [
     { href: "/", label: "💬 채팅", active: pathname === "/" },
     { href: "/admin", label: "📚 문서 관리", active: pathname === "/admin" },
+    { href: "/evaluation", label: "📊 평가", active: pathname === "/evaluation" },
   ];
 
   return (

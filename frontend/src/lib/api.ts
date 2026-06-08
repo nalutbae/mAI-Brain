@@ -177,3 +177,101 @@ export async function getSession(id: string): Promise<{ session: Session; messag
     session: { ...data, id: data.session_id },
   };
 }
+
+// ── RAG 평가 ─────────────────────────────────────────────────────────────
+
+export interface QAPair {
+  id: string;
+  question: string;
+  expected_answer: string;
+  expected_sources: string[];
+  mode: string;
+  tags: string[];
+}
+
+export interface QAPairCreate {
+  question: string;
+  expected_answer: string;
+  expected_sources?: string[];
+  mode?: string;
+  tags?: string[];
+}
+
+export interface SingleEvalResult {
+  qa_id: string;
+  question: string;
+  expected_answer: string;
+  actual_answer: string;
+  retrieved_sources: string[];
+  expected_sources: string[];
+  precision_at_k: number;
+  recall_at_k: number;
+  mrr: number;
+  faithfulness: number;
+  answer_relevance: number;
+  hallucination_score: number;
+}
+
+export interface EvaluationRun {
+  id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  qa_pair_ids: string[];
+  mode: string | null;
+  results: SingleEvalResult[];
+  created_at: string;
+  completed_at: string | null;
+  avg_precision: number;
+  avg_recall: number;
+  avg_mrr: number;
+  avg_faithfulness: number;
+  avg_answer_relevance: number;
+  avg_hallucination_score: number;
+}
+
+export interface EvaluationStats {
+  total_qa_pairs: number;
+  total_evaluations: number;
+  avg_precision: number;
+  avg_recall: number;
+  avg_mrr: number;
+  avg_faithfulness: number;
+  avg_answer_relevance: number;
+  avg_hallucination_score: number;
+  recent_evaluations: string[];
+}
+
+// QA Pairs
+export async function listQAPairs(): Promise<QAPair[]> {
+  return fetchAPI<QAPair[]>("/api/evaluation/qa-pairs");
+}
+
+export async function createQAPair(data: QAPairCreate): Promise<QAPair> {
+  return fetchAPI<QAPair>("/api/evaluation/qa-pairs", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteQAPair(id: string): Promise<void> {
+  await fetchAPI(`/api/evaluation/qa-pairs/${id}`, { method: "DELETE" });
+}
+
+// Evaluation
+export async function runEvaluation(qaPairIds?: string[], mode?: string): Promise<EvaluationRun> {
+  return fetchAPI<EvaluationRun>("/api/evaluation/run", {
+    method: "POST",
+    body: JSON.stringify({ qa_pair_ids: qaPairIds || [], mode }),
+  });
+}
+
+export async function listEvaluationResults(): Promise<EvaluationRun[]> {
+  return fetchAPI<EvaluationRun[]>("/api/evaluation/results");
+}
+
+export async function getEvaluationResult(id: string): Promise<EvaluationRun> {
+  return fetchAPI<EvaluationRun>(`/api/evaluation/results/${id}`);
+}
+
+export async function getEvaluationStats(): Promise<EvaluationStats> {
+  return fetchAPI<EvaluationStats>("/api/evaluation/stats");
+}

@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(2)
     else:
         logger.warning(
-            "Qdrant 연결 실패 (%d회 시도) — 서비스는 시작하지만 검색 기능이 동작하지 않을 수 있습니다",
+            "Qdrant 연결 실패 (%d회 시도) - 서비스는 시작하지만 검색 기능이 동작하지 않을 수 있습니다",
             max_retries,
         )
 
@@ -56,7 +56,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS 미들웨어 — Next.js 프론트엔드에서의 요청 허용
+# CORS 미들웨어 - Next.js 프론트엔드에서의 요청 허용
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -75,7 +75,7 @@ async def health_check():
 
 @app.get("/")
 async def root():
-    """루트 엔드포인트 — API 개요"""
+    """루트 엔드포인트 - API 개요"""
     return {
         "app": settings.app_name,
         "version": "0.1.0",
@@ -88,6 +88,7 @@ async def root():
 from app.api import documents
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 
-from app.api import chat, sessions
+from app.api import chat, evaluation, sessions
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluation"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
