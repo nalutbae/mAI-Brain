@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { deleteSession, type ExportFormat, downloadSessionExport } from "../lib/api";
+import { deleteSession, downloadSessionExport, downloadAllSessionsExport, type ExportFormat } from "../lib/api";
 
 /**
  * 이전 대화 세션 목록 컴포넌트
@@ -40,6 +40,8 @@ export default function SessionList({
 }: SessionListProps) {
   const [exportMenuOpen, setExportMenuOpen] = useState<string | null>(null);
   const [exporting, setExporting] = useState<string | null>(null);
+  const [exportAllMenuOpen, setExportAllMenuOpen] = useState(false);
+  const [exportingAll, setExportingAll] = useState(false);
 
   const handleExport = async (sessionId: string, format: ExportFormat) => {
     setExporting(sessionId);
@@ -65,18 +67,58 @@ export default function SessionList({
     }
   };
 
+  const handleExportAll = async (format: ExportFormat) => {
+    setExportingAll(true);
+    setExportAllMenuOpen(false);
+    try {
+      await downloadAllSessionsExport(format);
+    } catch (error) {
+      console.error("Export all failed:", error);
+      alert("전체 내보내기에 실패했습니다.");
+    } finally {
+      setExportingAll(false);
+    }
+  };
+
   return (
     <div className="w-64 bg-white border-r border-gray-200 dark:bg-gray-900 dark:border-gray-700 p-4 flex flex-col h-full">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-bold text-gray-700 dark:text-gray-200">
           대화 목록
         </h2>
-        <button
-          onClick={onNewSession}
-          className="py-1.5 px-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium"
-        >
-          + 새 대화
-        </button>
+        <div className="flex items-center gap-1">
+          {/* 전체 내보내기 드롭다운 */}
+          <div className="relative">
+            <button
+              onClick={() => setExportAllMenuOpen(!exportAllMenuOpen)}
+              disabled={exportingAll}
+              className="py-1.5 px-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors text-xs font-medium rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700"
+              title="전체 대화 내보내기"
+            >
+              {exportingAll ? "⏳" : "📥"}
+            </button>
+            {exportAllMenuOpen && (
+              <div className="absolute right-0 top-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg z-50 py-1 min-w-[100px]">
+                {EXPORT_FORMATS.map((fmt) => (
+                  <button
+                    key={fmt.value}
+                    onClick={() => handleExportAll(fmt.value)}
+                    className="w-full text-left px-3 py-1.5 text-xs hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-200 flex items-center gap-2"
+                  >
+                    <span>{fmt.icon}</span>
+                    <span>전체 {fmt.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <button
+            onClick={onNewSession}
+            className="py-1.5 px-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-xs font-medium"
+          >
+            + 새 대화
+          </button>
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto">
         {sessions.length === 0 ? (

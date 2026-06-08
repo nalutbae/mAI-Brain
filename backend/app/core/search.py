@@ -73,6 +73,7 @@ def hybrid_search(
     mode: ChatMode = ChatMode.FACT,
     session_id: Optional[str] = None,
     vdb: Optional[VectorDBProvider] = None,
+    collection_name: Optional[str] = None,
 ) -> SearchResult:
     """벡터 DB 검색 수행.
 
@@ -86,6 +87,7 @@ def hybrid_search(
         mode: 채팅 모드 (top-k 결정)
         session_id: 세션 ID (향후 세션별 필터링용, 현재 미사용)
         vdb: 벡터 DB 프로바이더 (None이면 기본 인스턴스)
+        collection_name: 검색 대상 컬렉션 이름 (None이면 기본 컬렉션)
 
     Returns:
         SearchResult: 검색 결과 + 메타데이터
@@ -118,6 +120,7 @@ def hybrid_search(
         query_dense=query_dense,
         query_sparse=query_sparse,
         limit=top_k,
+        collection_name=collection_name,
     )
 
     # 3. 검색 결과 변환 (VectorDBProvider.SearchHit → chat.SearchHit)

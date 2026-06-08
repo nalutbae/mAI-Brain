@@ -5,10 +5,10 @@
 - POST   /api/prompts                       — 프롬프트 생성
 - GET    /api/prompts/{id}                  — 프롬프트 조회
 - PUT    /api/prompts/{id}                  — 프롬프트 수정
-- DELETE  /api/prompts/{id}                 — 프롬프트 삭제
+- DELETE /api/prompts/{id}                  — 프롬프트 삭제
 - POST   /api/prompts/{id}/preview          — 프롬프트 미리보기 (변수 치환)
 - GET    /api/prompts/defaults              — 기본 프롬프트 목록
-- GET    /api/prompts/variables              — 지원 변수 목록
+- GET    /api/prompts/variables             — 지원 변수 목록
 """
 
 from fastapi import APIRouter, HTTPException, Query
@@ -33,7 +33,7 @@ def list_prompts(
     workspace_id: Optional[str] = Query(default=None, description="워크스페이스 ID 필터"),
     mode: Optional[ChatMode] = Query(default=None, description="채팅 모드 필터"),
 ):
-    """프롬프트 목록 조회. 필터 미지정 시 전체."""
+    """프롬프트 목록 조회."""
     store = get_system_prompt_store()
     prompts = store.list_prompts(workspace_id=workspace_id, mode=mode)
     return SystemPromptListResponse(prompts=prompts, total=len(prompts))

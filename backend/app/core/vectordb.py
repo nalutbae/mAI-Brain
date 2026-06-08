@@ -92,6 +92,7 @@ class VectorDBProvider(ABC):
         query_dense: list[float],
         query_sparse: Optional[dict[str, float]] = None,
         limit: int = 5,
+        collection_name: Optional[str] = None,
     ) -> list[SearchHit]:
         """벡터 검색.
 
@@ -99,6 +100,7 @@ class VectorDBProvider(ABC):
             query_dense: 질의 dense 벡터
             query_sparse: 질의 sparse 벡터 (지원 시, {토큰: 가중치})
             limit: 반환할 결과 수
+            collection_name: 검색 대상 컬렉션 이름 (None이면 기본 컬렉션)
 
         Returns:
             검색 결과 리스트
@@ -180,6 +182,10 @@ class QdrantVectorDB(VectorDBProvider):
     def collection_name(self) -> str:
         """컬렉션 이름 직접 접근 (하위 호환성)."""
         return self._collection_name
+
+    def _collection(self, override: Optional[str] = None) -> str:
+        """실제 사용할 컬렉션 이름 반환."""
+        return override or self._collection_name
 
     def _vector_size(self) -> int:
         """현재 임베딩 프로바이더에 맞는 dense 벡터 차원 반환."""
@@ -266,13 +272,18 @@ class QdrantVectorDB(VectorDBProvider):
         query_dense: list[float],
         query_sparse: Optional[dict[str, float]] = None,
         limit: int = 5,
+        collection_name: Optional[str] = None,
     ) -> list[SearchHit]:
         """하이브리드 검색 (dense + sparse RRF 융합).
 
         sparse가 제공되면 RRF 하이브리드, 아니면 dense-only 검색.
+
+        Args:
+            collection_name: 검색 대상 컬렉션 이름 (None이면 기본 컬렉션)
         """
         from app.ingestion.indexer import _token_to_index  # noqa: PLC0415
 
+        coll = self._collection(collection_name)
         has_sparse = query_sparse is not None
 
         if has_sparse:
@@ -295,7 +306,7 @@ class QdrantVectorDB(VectorDBProvider):
             ]
             fusion_query = self._models.FusionQuery(fusion=self._models.Fusion.RRF)
             response = self._client.query_points(
-                collection_name=self._collection_name,
+                collection_name=coll,
                 query=fusion_query,
                 prefetch=prefetch,
                 limit=limit,
@@ -304,7 +315,7 @@ class QdrantVectorDB(VectorDBProvider):
         else:
             # dense-only 검색
             response = self._client.query_points(
-                collection_name=self._collection_name,
+                collection_name=coll,
                 query=query_dense,
                 using="dense",
                 limit=limit,
@@ -461,14 +472,15 @@ class ChromaVectorDB(VectorDBProvider):
             self._client = chromadb.PersistentClient(path=self._chroma_dir)
         return self._client
 
-    def _get_collection(self):
+    def _get_collection(self, collection_name: Optional[str] = None):
         """컬렉션 지연 로드."""
-        if self._collection is not None:
+        coll_name = collection_name or self._collection_name
+        if self._collection is not None and collection_name is None:
             return self._collection
 
         client = self._get_client()
         self._collection = client.get_or_create_collection(
-            name=self._collection_name,
+            name=coll_name,
             metadata={"hnsw:space": "cosine"},
         )
         return self._collection
@@ -519,9 +531,14 @@ class ChromaVectorDB(VectorDBProvider):
         query_dense: list[float],
         query_sparse: Optional[dict[str, float]] = None,
         limit: int = 5,
+        collection_name: Optional[str] = None,
     ) -> list[SearchHit]:
-        """dense 검색 (ChromaDB는 sparse 미지원)."""
-        collection = self._get_collection()
+        """dense 검색 (ChromaDB는 sparse 미지원).
+
+        Args:
+            collection_name: 검색 대상 컬렉션 이름 (None이면 기본 컬렉션)
+        """
+        collection = self._get_collection(collection_name)
         results = collection.query(
             query_embeddings=[query_dense],
             n_results=limit,
@@ -643,6 +660,10 @@ class PGVectorDB(VectorDBProvider):
             self._collection_name,
         )
 
+    def _coll(self, override: Optional[str] = None) -> str:
+        """실제 사용할 컬렉션(테이블) 이름 반환."""
+        return override or self._collection_name
+
     async def _get_pool(self):
         """비동기 커넥션 풀 지연 초기화."""
         if self._pool is not None:
@@ -665,9 +686,9 @@ class PGVectorDB(VectorDBProvider):
 
         settings = get_settings()
         dsn = settings.pg_dsn
-        # DSN: postgresql://user:pass@host:port/dbname
+        # DSN: postgresql://user:***@host:port/dbname
         match = re.match(
-            r"postgresql://([^:]+):([^@]+)@([^:]+):(\d+)/(.+)",
+            r"postgresql://([^:***@]+)@([^:]+):(\d+)/(.+)",
             dsn,
         )
         if match:
@@ -687,11 +708,12 @@ class PGVectorDB(VectorDBProvider):
         settings = get_settings()
         return psycopg2.connect(settings.pg_dsn)
 
-    def _ensure_table(self, cur, dim: int) -> None:
+    def _ensure_table(self, cur, dim: int, collection_name: Optional[str] = None) -> None:
         """테이블 + 인덱스 생성 (존재하지 않을 때만)."""
+        coll = self._coll(collection_name)
         cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         cur.execute(f"""
-            CREATE TABLE IF NOT EXISTS {self._collection_name} (
+            CREATE TABLE IF NOT EXISTS {coll} (
                 id TEXT PRIMARY KEY,
                 document_id TEXT NOT NULL,
                 source TEXT NOT NULL,
@@ -703,17 +725,17 @@ class PGVectorDB(VectorDBProvider):
             );
         """)
         cur.execute(f"""
-            CREATE INDEX IF NOT EXISTS idx_{self._collection_name}_source
-            ON {self._collection_name} (source);
+            CREATE INDEX IF NOT EXISTS idx_{coll}_source
+            ON {coll} (source);
         """)
         cur.execute(f"""
-            CREATE INDEX IF NOT EXISTS idx_{self._collection_name}_document_id
-            ON {self._collection_name} (document_id);
+            CREATE INDEX IF NOT EXISTS idx_{coll}_document_id
+            ON {coll} (document_id);
         """)
         # HNSW 인덱스 — 코사인 거리
         cur.execute(f"""
-            CREATE INDEX IF NOT EXISTS idx_{self._collection_name}_embedding
-            ON {self._collection_name} USING hnsw (embedding vector_cosine_ops);
+            CREATE INDEX IF NOT EXISTS idx_{coll}_embedding
+            ON {coll} USING hnsw (embedding vector_cosine_ops);
         """)
 
     def create_collection(self, dim: int = 0) -> None:
@@ -778,8 +800,14 @@ class PGVectorDB(VectorDBProvider):
         query_dense: list[float],
         query_sparse: Optional[dict[str, float]] = None,
         limit: int = 5,
+        collection_name: Optional[str] = None,
     ) -> list[SearchHit]:
-        """dense 검색 (PGVector는 sparse 미지원, 코사인 유사도)."""
+        """dense 검색 (PGVector는 sparse 미지원, 코사인 유사도).
+
+        Args:
+            collection_name: 검색 대상 컬렉션(테이블) 이름 (None이면 기본)
+        """
+        coll = self._coll(collection_name)
         conn = self._get_sync_conn()
         try:
             vec_str = "[" + ",".join(str(v) for v in query_dense) + "]"
@@ -789,7 +817,7 @@ class PGVectorDB(VectorDBProvider):
                 SELECT id, document_id, source, text, chunk_index, page,
                        1 - (embedding <=> %s::vector) AS score,
                        payload
-                FROM {self._collection_name}
+                FROM {coll}
                 ORDER BY embedding <=> %s::vector
                 LIMIT %s;
                 """,

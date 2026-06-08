@@ -7,8 +7,12 @@ import VoiceInput from "./VoiceInput";
 import TTSButton from "./TTSButton";
 import type { ChatMode, ReasoningStrength } from "../lib/api";
 import SourceDisplay from "./SourceDisplay";
-import { chatApi, getSession, submitFeedback } from "../lib/api";
+import AgentToolSelector from "./AgentToolSelector";
+import type { AgentToolInfo } from "../lib/api";
+import AgentResult from "./AgentResult";
+import { chatApi, getSession, submitFeedback, listAgentTools, agentChat } from "../lib/api";
 import type { FeedbackType as ApiFeedbackType, FeedbackTag as ApiFeedbackTag, FeedbackCreate } from "../lib/api";
+import type { AgentToolResult } from "../lib/api";
 import { analyzeCrossReasoning } from "../lib/cross-reasoning";
 import type { CrossReasoningReport } from "../lib/cross-reasoning";
 
@@ -21,6 +25,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: string[];
+  agentResults?: AgentToolResult[];  // 에이전트 도구 결과
 }
 
 const FEEDBACK_TAGS: { value: ApiFeedbackTag; label: string }[] = [
@@ -30,6 +35,8 @@ const FEEDBACK_TAGS: { value: ApiFeedbackTag; label: string }[] = [
   { value: "hallucination", label: "환각" },
   { value: "outdated", label: "구식 정보" },
 ];
+
+const AGENT_TRIGGER = "@agent";
 
 export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -46,6 +53,13 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   const [feedbackComment, setFeedbackComment] = useState("");
   const [selectedTags, setSelectedTags] = useState<ApiFeedbackTag[]>([]);
   const [interimTranscript, setInterimTranscript] = useState("");
+
+  // Agent mode state
+  const [availableTools, setAvailableTools] = useState<AgentToolInfo[]>([]);
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [showAgentTools, setShowAgentTools] = useState(false);
+  const [agentToolsLoaded, setAgentToolsLoaded] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 세션이 변경될 때 메시지 로드
@@ -59,6 +73,32 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // @agent 프리픽스 감지 → 도구 목록 로드
+  useEffect(() => {
+    const trimmed = input.trim();
+    if (trimmed.startsWith(AGENT_TRIGGER) && !agentToolsLoaded && !isLoading) {
+      loadAgentTools();
+    }
+    // @agent가 아닌 다른 입력으로 바뀌면 도구 선택 UI 숨기기
+    if (!trimmed.startsWith(AGENT_TRIGGER) && showAgentTools) {
+      setShowAgentTools(false);
+      setSelectedTools([]);
+    }
+  }, [input]);
+
+  const loadAgentTools = async () => {
+    try {
+      const data = await listAgentTools();
+      setAvailableTools(data.tools);
+      setAgentToolsLoaded(true);
+      // 기본으로 모든 도구 선택
+      setSelectedTools(data.tools.map((t) => t.name));
+      setShowAgentTools(true);
+    } catch (error) {
+      console.error("Failed to load agent tools:", error);
+    }
+  };
 
   const loadSessionMessages = async (id: string) => {
     try {
@@ -74,8 +114,81 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
     }
   };
 
+  const handleToggleTool = (toolName: string) => {
+    setSelectedTools((prev) =>
+      prev.includes(toolName)
+        ? prev.filter((t) => t !== toolName)
+        : [...prev, toolName]
+    );
+  };
+
+  const handleAgentSubmit = async () => {
+    if (!input.trim() || isLoading || selectedTools.length === 0) return;
+
+    // @agent 프리픽스 제거한 질문 추출
+    const question = input.trim().replace(new RegExp(`^${AGENT_TRIGGER}\\s*`), "");
+
+    const userMessage: Message = {
+      role: "user",
+      content: input.trim(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    setInterimTranscript("");
+    setShowAgentTools(false);
+    setIsLoading(true);
+
+    try {
+      const response = await agentChat({
+        question: question || input.trim(),
+        tools: selectedTools,
+        session_id: sessionId,
+      });
+
+      const aiMessage: Message = {
+        role: "assistant",
+        content: response.answer,
+        agentResults: response.tool_results,
+      };
+
+      setMessages((prev) => [...prev, aiMessage]);
+
+      if (!sessionId && response.session_id && onSessionStart) {
+        onSessionStart(response.session_id);
+      }
+    } catch (error) {
+      console.error("Failed to execute agent:", error);
+      const errorMessage: Message = {
+        role: "assistant",
+        content: "에이전트 실행 중 오류가 발생했습니다.",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+      setSelectedTools([]);
+    }
+  };
+
+  const handleCancelAgent = () => {
+    setShowAgentTools(false);
+    setSelectedTools([]);
+    setInput("");
+  };
+
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
+
+    // @agent 모드인 경우 → agent 핸들러로 위임
+    if (input.trim().startsWith(AGENT_TRIGGER)) {
+      if (!agentToolsLoaded) {
+        await loadAgentTools();
+      }
+      if (availableTools.length > 0) {
+        setShowAgentTools(true);
+      }
+      return;
+    }
 
     const userMessage: Message = {
       role: "user",
@@ -213,7 +326,12 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
-            <p>질문을 입력해주세요</p>
+            <div className="text-center space-y-2">
+              <p>질문을 입력해주세요</p>
+              <p className="text-xs text-gray-300 dark:text-gray-600">
+                Tip: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">@agent</code>를 입력하면 에이전트 모드가 활성화됩니다
+              </p>
+            </div>
           </div>
         ) : (
           messages.map((message, index) => (
@@ -225,6 +343,10 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                   isOpen={sourceOpen}
                   onToggle={() => setSourceOpen(!sourceOpen)}
                 />
+              )}
+              {/* Agent tool results display */}
+              {message.agentResults && message.agentResults.length > 0 && (
+                <AgentResult results={message.agentResults} />
               )}
               {/* AI 응답에만 피드백 + TTS 버튼 표시 */}
               {message.role === "assistant" && !isLoading && (
@@ -318,6 +440,17 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
           reasoningStrength={reasoningStrength}
           onStrengthChange={setReasoningStrength}
         />
+        {/* Agent tool selector */}
+        {showAgentTools && availableTools.length > 0 && (
+          <AgentToolSelector
+            tools={availableTools}
+            selectedTools={selectedTools}
+            onToggle={handleToggleTool}
+            onCancel={handleCancelAgent}
+            onSubmit={handleAgentSubmit}
+            isLoading={isLoading}
+          />
+        )}
         <div className="p-4 flex gap-2 items-end">
           {/* 음성 입력 버튼 */}
           <VoiceInput
@@ -333,11 +466,13 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
               placeholder={
                 interimTranscript
                   ? `🎤 ${interimTranscript}`
-                  : "질문을 입력하세요..."
+                  : "질문을 입력하세요... (@agent 로 에이전트 모드)"
               }
               className={`w-full resize-none rounded-lg border px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-white ${
                 interimTranscript
                   ? "border-red-300 dark:border-red-600 ring-2 ring-red-200 dark:ring-red-800"
+                  : input.trim().startsWith(AGENT_TRIGGER)
+                  ? "border-blue-400 dark:border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800"
                   : "border-gray-300 dark:border-gray-600"
               }`}
               rows={2}
@@ -350,14 +485,24 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                 녹음 중...
               </div>
             )}
+            {/* 에이전트 모드 표시 */}
+            {input.trim().startsWith(AGENT_TRIGGER) && !interimTranscript && (
+              <div className="absolute -top-6 left-0 text-xs text-blue-500 dark:text-blue-400 flex items-center gap-1">
+                <span>🤖</span> 에이전트 모드
+              </div>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             <button
               onClick={handleSend}
               disabled={!input.trim() || isLoading}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              className={`px-6 py-3 text-white rounded-lg transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed ${
+                input.trim().startsWith(AGENT_TRIGGER)
+                  ? "bg-indigo-600 hover:bg-indigo-700"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
             >
-              {isLoading ? "전송 중..." : "전송"}
+              {isLoading ? "전송 중..." : input.trim().startsWith(AGENT_TRIGGER) ? "🤖 실행" : "전송"}
             </button>
             {messages.some((m) => m.role === "user") && (
               <button

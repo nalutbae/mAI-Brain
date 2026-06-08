@@ -47,6 +47,7 @@ export interface ChatRequest {
   mode: ChatMode;
   session_id?: string;
   reasoning_strength?: ReasoningStrength;
+  workspace_id?: string;
 }
 
 export interface ChatResponse {
@@ -534,7 +535,7 @@ export interface ConnectionTestResult {
   response_time_ms?: number;
 }
 
-// LLM 프로바이저 CRUD
+// LLM 프로바이더 CRUD
 export async function listLLMProviders(): Promise<{ providers: LLMProviderConfig[]; active_id: string | null }> {
   return fetchAPI("/api/settings/providers/llm");
 }
@@ -598,14 +599,16 @@ export async function listAvailableLLMProviders(): Promise<{ providers: Provider
   return fetchAPI("/api/settings/providers/available/llm");
 }
 
-export async function listAvailableEmbeddingProviders(): Promise<{ providers: Array<{
-  provider: string;
-  description: string;
-  default_model: string;
-  default_base_url: string;
-  default_dim: number;
-  requires_api_key: boolean;
-}>}> {
+export async function listAvailableEmbeddingProviders(): Promise<{
+  providers: Array<{
+    provider: string;
+    description: string;
+    default_model: string;
+    default_base_url: string;
+    default_dim: number;
+    requires_api_key: boolean;
+  }>;
+}> {
   return fetchAPI("/api/settings/providers/available/embedding");
 }
 
@@ -761,5 +764,203 @@ export async function unassignDocuments(workspaceId: string, documentIds: string
   return fetchAPI<Workspace>(`/api/workspaces/${workspaceId}/documents`, {
     method: "DELETE",
     body: JSON.stringify({ document_ids: documentIds, action: "unassign" }),
+  });
+}
+
+// ── 음성 인터페이스 ──────────────────────────────────────────────────────
+
+export interface STTResponse {
+  text: string;
+  language: string;
+  duration_seconds?: number;
+  provider: string;
+}
+
+export interface VoiceStatus {
+  stt_provider: string | null;
+  tts_provider: string | null;
+  message: string;
+}
+
+/**
+ * 음성 → 텍스트 변환 (서버 Whisper API)
+ * 브라우저 Web Speech API를 사용할 수 없을 때 폴백으로 사용
+ */
+export async function speechToText(audioBlob: Blob, language = "ko"): Promise<STTResponse> {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording.webm");
+  return fetchAPI<STTResponse>(`/api/voice/stt?language=${language}`, {
+    method: "POST",
+    body: formData,
+    headers: {}, // Content-Type은 브라우저가 multipart로 설정
+  });
+}
+
+/**
+ * 텍스트 → 음성 변환 (서버 ElevenLabs API)
+ * MP3 오디오 Blob을 반환합니다
+ */
+export async function textToSpeech(
+  text: string,
+  options?: { voiceId?: string; speed?: number }
+): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/voice/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      voice_id: options?.voiceId,
+      language: "ko",
+      speed: options?.speed ?? 1.0,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`TTS API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response.blob();
+}
+
+/**
+ * 음성 API 상태 확인
+ */
+export async function getVoiceStatus(): Promise<VoiceStatus> {
+  return fetchAPI<VoiceStatus>("/api/voice");
+}
+
+// ── 시스템 프롬프트 ──────────────────────────────────────────────────────
+
+export type PromptMode = "fact" | "summary" | "column" | "reasoning";
+
+export interface SystemPrompt {
+  id: string;
+  workspace_id: string | null;
+  mode: PromptMode;
+  prompt_text: string;
+  variables: string[];
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SystemPromptCreate {
+  workspace_id?: string | null;
+  mode: PromptMode;
+  prompt_text: string;
+  is_default?: boolean;
+}
+
+export interface SystemPromptUpdate {
+  prompt_text?: string;
+  is_default?: boolean;
+}
+
+export interface SystemPromptPreview {
+  id: string;
+  mode: PromptMode;
+  workspace_id: string | null;
+  original_text: string;
+  rendered_text: string;
+  variables_used: string[];
+  variables_missing: string[];
+}
+
+export interface SystemPromptListResponse {
+  prompts: SystemPrompt[];
+  total: number;
+}
+
+export interface SupportedVariables {
+  variables: Record<string, string>;
+}
+
+export async function listPrompts(params?: {
+  workspace_id?: string;
+  mode?: PromptMode;
+}): Promise<SystemPromptListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.workspace_id) searchParams.set("workspace_id", params.workspace_id);
+  if (params?.mode) searchParams.set("mode", params.mode);
+  const qs = searchParams.toString();
+  return fetchAPI<SystemPromptListResponse>(`/api/prompts${qs ? `?${qs}` : ""}`);
+}
+
+export async function createPrompt(data: SystemPromptCreate): Promise<SystemPrompt> {
+  return fetchAPI<SystemPrompt>("/api/prompts", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getPrompt(id: string): Promise<SystemPrompt> {
+  return fetchAPI<SystemPrompt>(`/api/prompts/${id}`);
+}
+
+export async function updatePrompt(id: string, data: SystemPromptUpdate): Promise<SystemPrompt> {
+  return fetchAPI<SystemPrompt>(`/api/prompts/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePrompt(id: string): Promise<{ message: string; id: string }> {
+  return fetchAPI(`/api/prompts/${id}`, { method: "DELETE" });
+}
+
+export async function previewPrompt(id: string, workspace_id?: string): Promise<SystemPromptPreview> {
+  const searchParams = new URLSearchParams();
+  if (workspace_id) searchParams.set("workspace_id", workspace_id);
+  const qs = searchParams.toString();
+  return fetchAPI<SystemPromptPreview>(`/api/prompts/${id}/preview${qs ? `?${qs}` : ""}`, {
+    method: "POST",
+  });
+}
+
+export async function listDefaultPrompts(): Promise<SystemPromptListResponse> {
+  return fetchAPI<SystemPromptListResponse>("/api/prompts/defaults");
+}
+
+export async function listSupportedVariables(): Promise<SupportedVariables> {
+  return fetchAPI<SupportedVariables>("/api/prompts/variables");
+}
+
+// ── 에이전트 모드 ─────────────────────────────────────────────────────────
+
+export interface AgentToolInfo {
+  name: string;
+  description: string;
+  display_type: string;
+}
+
+export interface AgentToolResult {
+  tool_name: string;
+  success: boolean;
+  data: Record<string, unknown>;
+  error?: string;
+  display_type: string;
+}
+
+export interface AgentRequest {
+  question: string;
+  tools: string[];
+  tool_params?: Record<string, Record<string, unknown>>;
+  session_id?: string;
+}
+
+export interface AgentResponse {
+  answer: string;
+  tool_results: AgentToolResult[];
+  session_id?: string;
+}
+
+export async function listAgentTools(): Promise<{ tools: AgentToolInfo[] }> {
+  return fetchAPI<{ tools: AgentToolInfo[] }>("/api/agent/tools");
+}
+
+export async function agentChat(request: AgentRequest): Promise<AgentResponse> {
+  return fetchAPI<AgentResponse>("/api/agent/chat", {
+    method: "POST",
+    body: JSON.stringify(request),
   });
 }

@@ -46,6 +46,7 @@ async def create_chat(request: ChatRequest):
         question: 사용자 질문
         mode: 채팅 모드 (fact/summary/column/reasoning)
         session_id: 세션 ID (선택, 없으면 자동 생성)
+        workspace_id: 워크스페이스 ID (선택, 검색 범위 제한)
     """
     store = get_session_store()
 
@@ -99,12 +100,22 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
         session_data = store.create_session(title=title)
         session_id = session_data["session_id"]
 
+    # 1.5 워크스페이스 컬렉션 결정
+    collection_name = None
+    if request.workspace_id:
+        from app.core.workspace import get_workspace_store
+        ws_store = get_workspace_store()
+        collection_name = ws_store.get_collection_name(request.workspace_id)
+        logger.info("워크스페이스 검색: workspace_id=%s, collection=%s",
+                     request.workspace_id, collection_name)
+
     # 2. 하이브리드 검색
     try:
         search_result = hybrid_search(
             query=request.question,
             mode=request.mode,
             session_id=session_id,
+            collection_name=collection_name,
         )
     except Exception as exc:
         logger.error("검색 오류: %s", exc, exc_info=True)
@@ -126,6 +137,7 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
             mode=request.mode,
             chat_history=chat_history,
             reasoning_strength=request.reasoning_strength,
+            workspace_id=request.workspace_id,
         )
     except Exception as exc:
         logger.error("LLM 오류: %s", exc, exc_info=True)

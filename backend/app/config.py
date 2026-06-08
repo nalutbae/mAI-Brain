@@ -20,6 +20,13 @@ class EmbeddingProviderType(str, Enum):
     OLLAMA = "ollama"
 
 
+class VectorDBType(str, Enum):
+    """벡터 DB 타입"""
+    QDRANT = "qdrant"
+    CHROMA = "chroma"
+    PGVECTOR = "pgvector"
+
+
 class LLMProviderType(str, Enum):
     """LLM 제공자 타입 (레거시 — models/provider.py의 다중 프로바이더로 대체)"""
     OLLAMA_CLOUD = "ollama-cloud"
@@ -55,6 +62,9 @@ class Settings(BaseSettings):
     # Qdrant
     qdrant_url: str = "http://localhost:6333"
     qdrant_collection_name: str = "mai_brain_documents"
+
+    # 벡터 DB 선택
+    vector_db: VectorDBType = VectorDBType.QDRANT
 
     # 임베딩 (레거시 — provider_settings.json이 우선)
     embedding_provider: EmbeddingProviderType = EmbeddingProviderType.LOCAL
@@ -93,6 +103,11 @@ class Settings(BaseSettings):
     top_k_summary: int = 8
     top_k_column: int = 18
     top_k_reasoning: int = 15
+
+    # 음성 인터페이스 (선택적)
+    voice_whisper_api_key: str = ""
+    voice_elevenlabs_api_key: str = ""
+    voice_elevenlabs_voice_id: str = ""
 
     # 앱 설정
     app_name: str = "mAI-Brain"

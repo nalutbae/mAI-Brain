@@ -1,13 +1,9 @@
 """mAI-Brain AI 챗봇 — LLM 클라이언트 모듈
 
-ollama-cloud(1순위) + DeepSeek API(2순위) LLM 호출.
-시스템 프롬프트: 워크스페이스/모드별 커스터마이제이션 지원.
-
-핵심 설계:
-- OpenAI 호환 엔드포인트로 ollama-cloud 호출
-- DeepSeek API 폴백 (ollama-cloud 실패 시)
-- 이전 대화 컨텍스트를 프롬프트에 포함하여 이어서 대화 가능
-- 커스텀 시스템 프롬프트 (워크스페이스/모드별) 지원
+ProviderSettingsStore 기반 다중 프로바이더 지원:
+- Ollama, OpenAI, Anthropic, Groq, DeepSeek, Custom
+- 활성 프로바이더 → 폴백 프로바이더 순서로 시도
+- 시스템 프롬프트: 워크스페이스/모드별 커스터마이제이션 지원
 """
 
 from __future__ import annotations
@@ -17,8 +13,13 @@ from typing import Optional
 
 import httpx
 
-from app.config import ChatMode, LLMProviderType, ReasoningStrength, get_settings
+from app.config import ChatMode, ReasoningStrength, get_settings
 from app.models.chat import SearchHit
+from app.models.provider import (
+    LLMProviderConfig,
+    LLMProviderType,
+    ProviderSettingsStore,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,6 @@ DEFAULT_MODE_INSTRUCTIONS: dict[ChatMode, str] = {
 8. 최종 답변은 한국어로, 원문 용어는 그대로 사용하라.""",
 }
 
-
 # 추론 강도별 추가 프롬프트
 REASONING_STRENGTH_INSTRUCTIONS: dict[ReasoningStrength, str] = {
     ReasoningStrength.ALL: "",  # 기본 추론 프롬프트 그대로 사용
@@ -113,21 +113,6 @@ REASONING_STRENGTH_INSTRUCTIONS: dict[ReasoningStrength, str] = {
 - 근거가 되는 문서가 없더라도 최대한 유사한 답변을 제출하라.""",
 }
 
-
-def _get_reasoning_instruction(strength: Optional[ReasoningStrength]) -> str:
-    """추론 강도에 따른 프롬프트 조정.
-
-    Args:
-        strength: 추론 강도 (None → 전체 모드)
-
-    Returns:
-        추가 프롬프트 문자열 (없으면 빈 문자열)
-    """
-    if strength is None or strength == ReasoningStrength.ALL:
-        return ""
-    return REASONING_STRENGTH_INSTRUCTIONS.get(strength, "")
-
-
 # 컬럼 모드 근거 강도별 추가 프롬프트
 COLUMN_STRENGTH_INSTRUCTIONS: dict[ReasoningStrength, str] = {
     ReasoningStrength.ALL: "",
@@ -150,6 +135,13 @@ COLUMN_STRENGTH_INSTRUCTIONS: dict[ReasoningStrength, str] = {
 - 근거 부족을 솔직히 인정하고 다양한 관점을 제시하라.
 - 근거 문서가 없는 경우에도 최대한 논리적으로 컬럼을 작성하라.""",
 }
+
+
+def _get_reasoning_instruction(strength: Optional[ReasoningStrength]) -> str:
+    """추론 강도에 따른 프롬프트 조정."""
+    if strength is None or strength == ReasoningStrength.ALL:
+        return ""
+    return REASONING_STRENGTH_INSTRUCTIONS.get(strength, "")
 
 
 def _get_column_strength_instruction(strength: Optional[ReasoningStrength]) -> str:
@@ -180,7 +172,6 @@ def get_system_prompt_text(
         effective = store.get_effective_prompt(mode=mode, workspace_id=workspace_id)
 
         if effective is not None:
-            # 커스텀 또는 기본 프롬프트 — 변수 치환 후 반환
             context = store.build_context(workspace_id=workspace_id)
             rendered, _, _ = render_prompt(effective.prompt_text, context)
             return rendered
@@ -192,36 +183,46 @@ def get_system_prompt_text(
 
 
 def get_base_system_prompt(workspace_id: Optional[str] = None) -> str:
-    """베이스 시스템 프롬프트 (모드 지시사항 앞에 추가).
-
-    일반적으로 DEFAULT_SYSTEM_PROMPT을 사용하되,
-    커스텀 프롬프트가 전체 시스템 프롬프트를 대체하지 않는 경우 기반이 됨.
-    """
+    """베이스 시스템 프롬프트 (모드 지시사항 앞에 추가)."""
     return DEFAULT_SYSTEM_PROMPT
 
 
 # --------------------------------------------------------------------------- #
-# LLM 클라이언트
+# LLM 클라이언트 — ProviderSettingsStore 기반 다중 프로바이더
 # --------------------------------------------------------------------------- #
 
 class LLMClient:
     """LLM API 클라이언트.
 
-    ollama-cloud → DeepSeek API 순서로 폴백.
-    둘 다 실패하면 예외 발생.
+    ProviderSettingsStore에서 활성 프로바이더 설정을 읽어 동적으로 호출.
+    활성 프로바이더 실패 시 폴백 프로바이더로 자동 전환.
 
-    OpenAI 호환 엔드포인트를 사용 (ollama-cloud, DeepSeek 모두 지원).
+    지원 프로바이더:
+    - Ollama (OpenAI 호환)
+    - OpenAI
+    - Anthropic (네이티브 API)
+    - Groq (OpenAI 호환)
+    - DeepSeek (OpenAI 호환)
+    - Custom (OpenAI 호환)
     """
 
     def __init__(self) -> None:
-        settings = get_settings()
-        self._provider = settings.llm_provider
-        self._deepseek_api_key = settings.deepseek_api_key
-        self._deepseek_base_url = settings.deepseek_base_url
-        self._deepseek_model = settings.deepseek_model
-        # ollama-cloud 설정 (환경변수 또는 기본값)
-        self._ollama_base_url = settings.ollama_base_url
         self._timeout = 120.0  # LLM 응답 대기 시간 (초)
+
+    @property
+    def _store(self) -> ProviderSettingsStore:
+        return ProviderSettingsStore.get()
+
+    def _get_provider_chain(self) -> list[LLMProviderConfig]:
+        """호출할 프로바이더 체인 반환 (활성 → 폴백)."""
+        active = self._store.get_active_llm_provider()
+        chain = [active]
+
+        fallback = self._store.get_fallback_llm_provider(active)
+        if fallback and fallback.id != active.id:
+            chain.append(fallback)
+
+        return chain
 
     def generate_answer(
         self,
@@ -251,47 +252,193 @@ class LLMClient:
         # 사용자 프롬프트 구성
         user_message = self._build_user_prompt(query, context_text, mode)
 
-        # 메시지 시퀀스 구성 (workspace_id로 커스텀 프롬프트 로드)
+        # 메시지 시퀀스 구성
         messages = self._build_messages(
             mode, user_message, chat_history, reasoning_strength,
             workspace_id=workspace_id,
         )
 
-        # LLM 호출 — provider 순서대로 시도
         # 추론 모드는 더 긴 응답이 필요하므로 max_tokens 상향
         max_tokens = 3072 if mode == ChatMode.REASONING else 2048
 
-        if self._provider == LLMProviderType.OLLAMA_CLOUD:
-            answer = self._call_ollama_cloud(messages, max_tokens)
-            if answer is not None:
-                return answer
-            # 폴백
-            logger.info("ollama-cloud 실패, DeepSeek API로 폴백")
-            answer = self._call_deepseek(messages, max_tokens)
-            if answer is not None:
-                return answer
-        else:
-            answer = self._call_deepseek(messages, max_tokens)
-            if answer is not None:
-                return answer
-            # 폴백
-            logger.info("DeepSeek API 실패, ollama-cloud로 폴백")
-            answer = self._call_ollama_cloud(messages, max_tokens)
-            if answer is not None:
-                return answer
+        # 프로바이더 체인 순서대로 시도
+        chain = self._get_provider_chain()
+        last_error = None
+
+        for provider_config in chain:
+            try:
+                answer = self._call_provider(provider_config, messages, max_tokens)
+                if answer is not None:
+                    logger.info(
+                        "LLM 응답 성공: provider=%s, model=%s (%d자)",
+                        provider_config.provider.value,
+                        provider_config.get_effective_model(),
+                        len(answer),
+                    )
+                    return answer
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "LLM 호출 실패 (provider=%s): %s — 다음 프로바이더로 폴백",
+                    provider_config.provider.value, exc,
+                )
 
         # 모든 provider 실패
-        raise RuntimeError("모든 LLM 제공자 호출 실패 — ollama-cloud과 DeepSeek API 모두 응답하지 않습니다.")
+        err_msg = "모든 LLM 제공자 호출 실패"
+        if last_error:
+            err_msg += f": {last_error}"
+        raise RuntimeError(err_msg)
+
+    # ------------------------------------------------------------------- #
+    # 프로바이더 호출 라우팅
+    # ------------------------------------------------------------------- #
+
+    def _call_provider(
+        self,
+        provider: LLMProviderConfig,
+        messages: list[dict[str, str]],
+        max_tokens: int = 2048,
+    ) -> Optional[str]:
+        """프로바이더 타입에 따라 적절한 API 호출."""
+        ptype = provider.provider
+
+        if ptype == LLMProviderType.ANTHROPIC:
+            return self._call_anthropic(provider, messages, max_tokens)
+        else:
+            # OpenAI 호환: ollama, openai, groq, deepseek, custom
+            return self._call_openai_compatible(provider, messages, max_tokens)
+
+    # ------------------------------------------------------------------- #
+    # OpenAI 호환 API (ollama, openai, groq, deepseek, custom)
+    # ------------------------------------------------------------------- #
+
+    def _call_openai_compatible(
+        self,
+        provider: LLMProviderConfig,
+        messages: list[dict[str, str]],
+        max_tokens: int = 2048,
+    ) -> Optional[str]:
+        """OpenAI Chat Completions 호환 API 공통 호출."""
+        base_url = provider.get_effective_base_url()
+        model = provider.get_effective_model()
+        api_key = provider.api_key or "ollama"  # ollama는 더미값
+
+        url = f"{base_url.rstrip('/')}/v1/chat/completions"
+        temperature = getattr(provider, 'temperature', 0.1)
+
+        try:
+            response = httpx.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                },
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            answer = data["choices"][0]["message"]["content"]
+            return answer
+
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "%s API 오류: %d %s",
+                provider.provider.value,
+                exc.response.status_code,
+                exc.response.text[:200],
+            )
+            return None
+        except httpx.RequestError as exc:
+            logger.error("%s 연결 오류: %s", provider.provider.value, exc)
+            return None
+        except (KeyError, IndexError) as exc:
+            logger.error("%s 응답 파싱 오류: %s", provider.provider.value, exc)
+            return None
+
+    # ------------------------------------------------------------------- #
+    # Anthropic 네이티브 API
+    # ------------------------------------------------------------------- #
+
+    def _call_anthropic(
+        self,
+        provider: LLMProviderConfig,
+        messages: list[dict[str, str]],
+        max_tokens: int = 2048,
+    ) -> Optional[str]:
+        """Anthropic Messages API 호출."""
+        base_url = provider.get_effective_base_url()
+        model = provider.get_effective_model()
+        api_key = provider.api_key
+
+        if not api_key:
+            logger.warning("Anthropic API 키 없음 — 호출 스킵")
+            return None
+
+        # Anthropic은 system 프롬프트를 별도 필드로 분리
+        system_prompts = []
+        chat_messages = []
+        for msg in messages:
+            if msg["role"] == "system":
+                system_prompts.append(msg["content"])
+            else:
+                chat_messages.append(msg)
+
+        url = f"{base_url.rstrip('/')}/v1/messages"
+        body = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": chat_messages,
+        }
+        if system_prompts:
+            body["system"] = "\n\n".join(system_prompts)
+
+        try:
+            response = httpx.post(
+                url,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                json=body,
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            # Anthropic 응답: content[0].text
+            for block in data.get("content", []):
+                if block.get("type") == "text":
+                    return block["text"]
+            return None
+
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "Anthropic API 오류: %d %s",
+                exc.response.status_code,
+                exc.response.text[:200],
+            )
+            return None
+        except httpx.RequestError as exc:
+            logger.error("Anthropic 연결 오류: %s", exc)
+            return None
+        except (KeyError, IndexError) as exc:
+            logger.error("Anthropic 응답 파싱 오류: %s", exc)
+            return None
 
     # ------------------------------------------------------------------- #
     # 프롬프트 구성
     # ------------------------------------------------------------------- #
 
     def _build_context(self, contexts: list[SearchHit]) -> str:
-        """검색 결과를 컨텍스트 텍스트로 변환.
-
-        각 검색 결과를 번호가 매겨진 인용구로 포맷팅.
-        """
+        """검색 결과를 컨텍스트 텍스트로 변환."""
         if not contexts:
             return "관련 문서를 찾을 수 없습니다."
 
@@ -325,20 +472,13 @@ class LLMClient:
         reasoning_strength: Optional[ReasoningStrength] = None,
         workspace_id: Optional[str] = None,
     ) -> list[dict[str, str]]:
-        """OpenAI Chat API 메시지 시퀀스 구성.
-
-        시스템 프롬프트 → 모드 지시사항 → 이전 대화 기록 → 현재 사용자 메시지.
-        workspace_id가 제공되면 커스텀 프롬프트를 사용.
-        """
-        # 베이스 시스템 프롬프트
+        """OpenAI Chat API 메시지 시퀀스 구성."""
         messages = [
             {"role": "system", "content": get_base_system_prompt(workspace_id)},
         ]
 
-        # 모드별 추가 지시사항 (커스텀 프롬프트 또는 기본)
         mode_instruction = get_system_prompt_text(mode=mode, workspace_id=workspace_id)
         if mode_instruction:
-            # 추론/컬럼 모드 + 강도 지정 시: 강도별 추가 지시사항 덧붙임
             if reasoning_strength:
                 if mode == ChatMode.REASONING:
                     si = _get_reasoning_instruction(reasoning_strength)
@@ -350,110 +490,12 @@ class LLMClient:
                     mode_instruction = mode_instruction + "\n\n" + si
             messages.append({"role": "system", "content": mode_instruction})
 
-        # 이전 대화 기록 (이어서 대화)
         if chat_history:
             messages.extend(chat_history)
 
-        # 현재 질문
         messages.append({"role": "user", "content": user_message})
 
         return messages
-
-    # ------------------------------------------------------------------- #
-    # LLM API 호출
-    # ------------------------------------------------------------------- #
-
-    def _call_ollama_cloud(
-        self, messages: list[dict[str, str]], max_tokens: int = 2048,
-    ) -> Optional[str]:
-        """ollama-cloud API 호출 (OpenAI 호환 엔드포인트).
-
-        Returns:
-            답변 텍스트, 실패 시 None
-        """
-        settings = get_settings()
-        # ollama-cloud의 OpenAI 호환 엔드포인트
-        url = f"{self._ollama_base_url}/v1/chat/completions"
-
-        return self._call_openai_compatible(
-            url=url,
-            api_key="ollama",  # ollama는 API 키 불필요, 더미값
-            model=settings.ollama_model,  # 설정에서 모델명 로드
-            messages=messages,
-            provider_name="ollama-cloud",
-            max_tokens=max_tokens,
-        )
-
-    def _call_deepseek(
-        self, messages: list[dict[str, str]], max_tokens: int = 2048,
-    ) -> Optional[str]:
-        """DeepSeek API 호출.
-
-        Returns:
-            답변 텍스트, 실패 시 None
-        """
-        if not self._deepseek_api_key:
-            logger.warning("DEEPSEEK_API_KEY 미설정 — DeepSeek 호출 스킵")
-            return None
-
-        url = f"{self._deepseek_base_url}/chat/completions"
-
-        return self._call_openai_compatible(
-            url=url,
-            api_key=self._deepseek_api_key,
-            model=self._deepseek_model,
-            messages=messages,
-            provider_name="DeepSeek",
-            max_tokens=max_tokens,
-        )
-
-    def _call_openai_compatible(
-        self,
-        url: str,
-        api_key: str,
-        model: str,
-        messages: list[dict[str, str]],
-        provider_name: str,
-        max_tokens: int = 2048,
-    ) -> Optional[str]:
-        """OpenAI Chat Completions 호환 API 공통 호출.
-
-        ollama-cloud, DeepSeek 모두 동일한 스펙 사용.
-        """
-        try:
-            response = httpx.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "temperature": 0.1,  # 낮은 온도로 환각 최소화
-                    "max_tokens": max_tokens,
-                },
-                timeout=self._timeout,
-            )
-            response.raise_for_status()
-
-            data = response.json()
-            answer = data["choices"][0]["message"]["content"]
-            logger.info("%s 응답 성공 (%d자)", provider_name, len(answer))
-            return answer
-
-        except httpx.HTTPStatusError as exc:
-            logger.error(
-                "%s API 오류: %d %s",
-                provider_name, exc.response.status_code, exc.response.text[:200],
-            )
-            return None
-        except httpx.RequestError as exc:
-            logger.error("%s 연결 오류: %s", provider_name, exc)
-            return None
-        except (KeyError, IndexError) as exc:
-            logger.error("%s 응답 파싱 오류: %s", provider_name, exc)
-            return None
 
 
 # --------------------------------------------------------------------------- #
