@@ -298,6 +298,21 @@ def index_directory(
 # 내부 유틸리티
 # ---------------------------------------------------------------------------
 
+def _token_to_index(token: str) -> int:
+    """sparse 벡터의 토큰 키를 양의 정수 인덱스로 변환.
+
+    Qdrant sparse vector는 정수 인덱스를 요구하므로
+    토큰 문자열을 해시하여 양의 정수로 변환.
+
+    Args:
+        token: sparse 벡터 토큰 키
+
+    Returns:
+        양의 정수 인덱스
+    """
+    return abs(hash(token)) % (2**31)
+
+
 def _generate_document_id(filename: str) -> str:
     """파일명 기반 document_id 생성.
 

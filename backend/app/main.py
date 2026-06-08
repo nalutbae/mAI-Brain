@@ -39,6 +39,20 @@ async def lifespan(app: FastAPI):
             max_retries,
         )
 
+    # 임베딩 모델 사전 로드 (백그라운드 스레드에서 실행하여 이벤트 루프 블로킹 방지)
+    logger.info("임베딩 모델 사전 로드 시작...")
+    loop = asyncio.get_running_loop()
+
+    def _preload_embedding():
+        try:
+            from app.core.embedding import get_embedding_provider
+            provider = get_embedding_provider()
+            logger.info("임베딩 모델 사전 로드 완료: %s", type(provider).__name__)
+        except Exception:
+            logger.exception("임베딩 모델 사전 로드 실패 - 첫 인덱싱 시 로드됩니다")
+
+    await loop.run_in_executor(None, _preload_embedding)
+
     # 에이전트 도구 등록
     from app.core.agent_tools import WebSearchTool, SummarizeDocumentTool, GenerateChartTool, SaveFileTool
     from app.core.agent_tools.registry import get_tool_registry

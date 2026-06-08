@@ -10,12 +10,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile
 
 from app.config import get_settings
 from app.core.vectordb import get_vector_db
@@ -32,6 +34,9 @@ from app.models.document import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# 인덱싱 작업을 위한 전용 스레드풀 (이벤트 루프 블로킹 방지)
+_indexing_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="indexing")
 
 
 # ---------------------------------------------------------------------------
@@ -74,10 +79,10 @@ def _save_upload(file: UploadFile, upload_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 def _run_indexing(file_path: str) -> None:
-    """백그라운드에서 실행되는 인덱싱 태스크.
+    """인덱싱 태스크 (스레드풀에서 실행).
 
-    FastAPI BackgroundTasks에 의해 비동기 호출.
-    인덱싱 중에도 기존 검색 서비스에 영향 없음(핫 리로드).
+    무거운 임베딩 모델 로딩과 Qdrant upsert를 수행하므로
+    이벤트 루프 블로킹을 방지하기 위해 스레드풀에서 실행.
 
     Args:
         file_path: 인덱싱할 파일 경로
@@ -92,24 +97,36 @@ def _run_indexing(file_path: str) -> None:
         logger.exception("백그라운드 인덱싱 예외: %s", file_path)
 
 
+def _run_bulk_index(dir_path: str) -> None:
+    """일괄 인덱싱 태스크 (스레드풀에서 실행)."""
+    try:
+        results = index_directory(dir_path)
+        success = sum(1 for r in results if r.status == IndexingStatus.COMPLETED)
+        failed = sum(1 for r in results if r.status == IndexingStatus.FAILED)
+        logger.info("일괄 인덱싱 완료: 성공 %d, 실패 %d", success, failed)
+    except Exception:
+        logger.exception("일괄 인덱싱 예외")
+
+
 # ---------------------------------------------------------------------------
 # API 엔드포인트
 # ---------------------------------------------------------------------------
 
 @router.post("/upload-multiple")
 async def upload_multiple_documents(
-    background_tasks: BackgroundTasks,
     files: list[UploadFile],
 ) -> list[DocumentUploadResponse]:
     """여러 파일 동시 업로드 → 각각 백그라운드 인덱싱.
 
     - multipart/form-data로 다중 파일 수신 (같은 필드명 'files')
-    - 각 파일을 저장하고 백그라운드 인덱싱 시작
+    - 각 파일을 저장하고 스레드풀에서 인덱싱 시작
     - 각 파일별 {document_id, status: "indexing"} 응답
     """
     results: list[DocumentUploadResponse] = []
     upload_dir = _get_upload_dir()
     from app.ingestion.indexer import _generate_document_id
+
+    loop = asyncio.get_running_loop()
 
     for file in files:
         filename = file.filename or "unknown"
@@ -138,7 +155,8 @@ async def upload_multiple_documents(
 
         tracker = get_tracker()
         tracker.start(document_id, filename)
-        background_tasks.add_task(_run_indexing, str(saved_path))
+        # 스레드풀에서 인덱싱 실행 (이벤트 루프 블로킹 방지)
+        loop.run_in_executor(_indexing_executor, _run_indexing, str(saved_path))
 
         results.append(DocumentUploadResponse(
             document_id=document_id,
@@ -152,18 +170,14 @@ async def upload_multiple_documents(
 
 @router.post("/upload", response_model=DocumentUploadResponse)
 async def upload_document(
-    background_tasks: BackgroundTasks,
     file: UploadFile,
 ) -> DocumentUploadResponse:
-    """문서 업로드 → 백그라운드 인덱싱.
+    """문서 업로드 → 스레드풀에서 인덱싱.
 
     - multipart/form-data로 파일 수신
-    - 파일 저장 후 백그라운드 태스크로 인덱싱
+    - 파일 저장 후 스레드풀에서 인덱싱
     - 즉시 {document_id, status: "indexing"} 응답
     - 클라이언트는 GET /status/{document_id} 로 상태 폴링
-
-    핫 리로드: 인덱싱이 백그라운드에서 실행되므로
-    기존 검색 서비스에 중단 없음.
     """
     # 파일 형식 검증
     filename = file.filename or "unknown"
@@ -189,12 +203,13 @@ async def upload_document(
     from app.ingestion.indexer import _generate_document_id
     document_id = _generate_document_id(filename)
 
-    # 트래커에 상태 등록 (시작 전에 PENDING으로)
+    # 트래커에 상태 등록
     tracker = get_tracker()
     tracker.start(document_id, filename)
 
-    # 백그라운드 인덱싱 예약
-    background_tasks.add_task(_run_indexing, str(saved_path))
+    # 스레드풀에서 인덱싱 실행 (이벤트 루프 블로킹 방지)
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(_indexing_executor, _run_indexing, str(saved_path))
 
     return DocumentUploadResponse(
         document_id=document_id,
@@ -301,9 +316,7 @@ async def list_documents() -> DocumentListResponse:
 
 
 @router.post("/reindex-all")
-async def reindex_all_documents(
-    background_tasks: BackgroundTasks,
-) -> dict:
+async def reindex_all_documents() -> dict:
     """data/uploads/ 내 모든 지원 파일 일괄 재인덱싱.
 
     기존 Qdrant 포인트를 유지하면서 누락된 파일만 인덱싱하거나,
@@ -314,18 +327,7 @@ async def reindex_all_documents(
     """
     from fastapi import Query
 
-    # 지연 임포트로 Query 파라미터 처리 (위에서 이미 import됨)
     upload_dir = _get_upload_dir()
-
-    def _run_bulk_index(dir_path: str) -> None:
-        """백그라운드에서 전체 디렉토리 인덱싱 실행."""
-        try:
-            results = index_directory(dir_path)
-            success = sum(1 for r in results if r.status == IndexingStatus.COMPLETED)
-            failed = sum(1 for r in results if r.status == IndexingStatus.FAILED)
-            logger.info("일괄 인덱싱 완료: 성공 %d, 실패 %d", success, failed)
-        except Exception:
-            logger.exception("일괄 인덱싱 예외")
 
     # 지원 파일 개수 확인
     supported_files = [
@@ -339,8 +341,9 @@ async def reindex_all_documents(
             "file_count": 0,
         }
 
-    # 백그라운드에서 일괄 인덱싱 시작
-    background_tasks.add_task(_run_bulk_index, str(upload_dir))
+    # 스레드풀에서 일괄 인덱싱 실행 (이벤트 루프 블로킹 방지)
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(_indexing_executor, _run_bulk_index, str(upload_dir))
 
     return {
         "message": f"{len(supported_files)}개 파일 일괄 인덱싱이 시작되었습니다.",
