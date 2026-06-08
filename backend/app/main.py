@@ -86,10 +86,13 @@ async def root():
 from app.api import documents
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 
-from app.api import chat, evaluation, sessions, cross_reasoning, chunking, feedback
+from app.api import chat, evaluation, sessions, cross_reasoning, chunking, feedback, workspace
+from app.api import chat, evaluation, sessions, cross_reasoning, chunking, feedback, workspace
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluation"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(cross_reasoning.router, prefix="/api/cross-reasoning", tags=["cross-reasoning"])
 app.include_router(chunking.router, prefix="/api/chunking", tags=["chunking"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
+app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])
+app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])

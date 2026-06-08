@@ -477,3 +477,73 @@ export async function getFeedbackSuggestions(): Promise<FeedbackSuggestion[]> {
 export async function getSessionFeedback(sessionId: string): Promise<Feedback[]> {
   return fetchAPI<Feedback[]>(`/api/feedback/session/${sessionId}`);
 }
+
+// ── 워크스페이스 ──────────────────────────────────────────────────────────
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  system_prompt: string;
+  vector_collection: string;
+  document_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceCreate {
+  name: string;
+  description?: string;
+  system_prompt?: string;
+}
+
+export interface WorkspaceUpdate {
+  name?: string;
+  description?: string;
+  system_prompt?: string;
+}
+
+export interface WorkspaceListResponse {
+  workspaces: Workspace[];
+  total: number;
+}
+
+export async function listWorkspaces(): Promise<WorkspaceListResponse> {
+  return fetchAPI<WorkspaceListResponse>("/api/workspaces");
+}
+
+export async function createWorkspace(data: WorkspaceCreate): Promise<Workspace> {
+  return fetchAPI<Workspace>("/api/workspaces", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getWorkspace(id: string): Promise<Workspace> {
+  return fetchAPI<Workspace>(`/api/workspaces/${id}`);
+}
+
+export async function updateWorkspace(id: string, data: WorkspaceUpdate): Promise<Workspace> {
+  return fetchAPI<Workspace>(`/api/workspaces/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteWorkspace(id: string): Promise<{ message: string; workspace_id: string }> {
+  return fetchAPI(`/api/workspaces/${id}`, { method: "DELETE" });
+}
+
+export async function assignDocuments(workspaceId: string, documentIds: string[]): Promise<Workspace> {
+  return fetchAPI<Workspace>(`/api/workspaces/${workspaceId}/documents`, {
+    method: "POST",
+    body: JSON.stringify({ document_ids: documentIds, action: "assign" }),
+  });
+}
+
+export async function unassignDocuments(workspaceId: string, documentIds: string[]): Promise<Workspace> {
+  return fetchAPI<Workspace>(`/api/workspaces/${workspaceId}/documents`, {
+    method: "DELETE",
+    body: JSON.stringify({ document_ids: documentIds, action: "unassign" }),
+  });
+}

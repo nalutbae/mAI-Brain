@@ -8,6 +8,7 @@ export default function NavBar() {
 
   const links = [
     { href: "/", label: "💬 채팅", active: pathname === "/" },
+    { href: "/workspaces", label: "📁 워크스페이스", active: pathname === "/workspaces" },
     { href: "/cross-reasoning", label: "🔀 교차추론", active: pathname === "/cross-reasoning" },
     { href: "/admin", label: "📚 문서 관리", active: pathname === "/admin" },
     { href: "/admin/chunking", label: "⚙️ 청킹 프로파일", active: pathname === "/admin/chunking" },
