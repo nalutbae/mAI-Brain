@@ -22,7 +22,7 @@ import logging
 
 import chardet
 import fitz  # PyMuPDF
-from ebooklib import epub
+from ebooklib import epub as _epub_mod
 
 from PIL import Image, ImageEnhance, ImageFilter
 
@@ -235,8 +235,14 @@ def _extract_pdf(file_path: str) -> ExtractResult:
 
 
 def _extract_epub(file_path: str) -> ExtractResult:
-    """EPUB에서 텍스트를 추출합니다."""
-    book = epub.read_epub(file_path)
+    """EPUB에서 텍스트를 추출합니다.
+
+    ebooklib 0.20+에서 ITEM_DOCUMENT 상수가 제거되었으므로
+    isinstance(item, EpubHtml)로 문서 항목을 필터링합니다.
+    EpubHtml의 get_type()은 정수 9를 반환합니다.
+    """
+    book = _epub_mod.read_epub(file_path)
+    EpubHtml = _epub_mod.EpubHtml
 
     full_text: list[str] = []
     metadata: dict = {
@@ -245,7 +251,10 @@ def _extract_epub(file_path: str) -> ExtractResult:
     }
 
     for item in book.get_items():
-        if item.get_type() == epub.ITEM_DOCUMENT:
+        # ebooklib 0.20+: ITEM_DOCUMENT 상수 제거, isinstance로 대체
+        # EpubHtml이 실제 텍스트 콘텐츠(XHTML)를 담음
+        # EpubNav도 XHTML이지만 목차(nav)용이므로 제외
+        if isinstance(item, EpubHtml) and not isinstance(item, _epub_mod.EpubNav):
             chapter_name = item.get_name()
             metadata["chapters"].append(chapter_name)
 
@@ -257,6 +266,9 @@ def _extract_epub(file_path: str) -> ExtractResult:
 
             if text_only:
                 full_text.append(f"--- 챕터: {chapter_name} ---\n{text_only}\n")
+
+    if not full_text:
+        logger.warning("EPUB에서 추출된 텍스트 없음: %s", file_path)
 
     return ExtractResult(
         text="\n".join(full_text),
