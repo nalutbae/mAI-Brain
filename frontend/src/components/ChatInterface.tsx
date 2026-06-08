@@ -7,6 +7,7 @@ import type { ChatMode, ReasoningStrength } from "../lib/api";
 import SourceDisplay from "./SourceDisplay";
 import { chatApi, getSession } from "../lib/api";
 import { analyzeCrossDocument, type CrossAnalysis } from "../lib/cross-reasoning";
+import { submitFeedback, type FeedbackType, type FeedbackTag } from "../lib/feedback";
 
 interface ChatInterfaceProps {
   sessionId?: string;
@@ -29,6 +30,9 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   const [crossAnalysis, setCrossAnalysis] = useState<CrossAnalysis | null>(null);
   const [isCrossAnalyzing, setIsCrossAnalyzing] = useState(false);
   const [showCrossResult, setShowCrossResult] = useState(false);
+  const [feedbackGiven, setFeedbackGiven] = useState<Record<number, FeedbackType>>({});
+  const [showFeedbackTags, setShowFeedbackTags] = useState<number | null>(null);
+  const [feedbackComment, setFeedbackComment] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 세션이 변경될 때 메시지 로드
@@ -142,7 +146,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
         ) : (
           messages.map((message, index) => (
             <div key={index}>
-              <MessageBubble message={message} />
+              <MessageBubble message={message} sessionId={sessionId} messageIndex={index} />
               {message.sources && message.sources.length > 0 && (
                 <SourceDisplay
                   sources={message.sources}

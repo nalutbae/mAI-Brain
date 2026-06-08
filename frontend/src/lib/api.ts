@@ -275,3 +275,205 @@ export async function getEvaluationResult(id: string): Promise<EvaluationRun> {
 export async function getEvaluationStats(): Promise<EvaluationStats> {
   return fetchAPI<EvaluationStats>("/api/evaluation/stats");
 }
+
+// ── 청킹 프로파일 ──────────────────────────────────────────────────────
+
+export type ChunkingStrategy = "fixed" | "sentence" | "paragraph" | "section" | "article";
+
+export interface ChunkingProfile {
+  id: string;
+  name: string;
+  description: string;
+  strategy: ChunkingStrategy;
+  chunk_size: number;
+  chunk_overlap: number;
+  separator_pattern: string;
+  min_chunk_size: number;
+  metadata_fields: string[];
+  is_default: boolean;
+  created_at: string;
+}
+
+export interface ChunkingProfileCreate {
+  name: string;
+  description?: string;
+  strategy?: ChunkingStrategy;
+  chunk_size?: number;
+  chunk_overlap?: number;
+  separator_pattern?: string;
+  min_chunk_size?: number;
+  metadata_fields?: string[];
+}
+
+export interface ChunkingProfileUpdate {
+  name?: string;
+  description?: string;
+  strategy?: ChunkingStrategy;
+  chunk_size?: number;
+  chunk_overlap?: number;
+  separator_pattern?: string;
+  min_chunk_size?: number;
+  metadata_fields?: string[];
+}
+
+export interface ChunkPreviewItem {
+  index: number;
+  text: string;
+  full_length: number;
+  metadata: Record<string, unknown>;
+}
+
+export interface ChunkPreview {
+  profile_id: string;
+  total_chunks: number;
+  chunks: ChunkPreviewItem[];
+  avg_chunk_size: number;
+  total_chars: number;
+}
+
+export interface ChunkPreviewRequest {
+  text: string;
+  profile_id?: string;
+  chunk_size?: number;
+  chunk_overlap?: number;
+}
+
+// 청킹 프로파일 API
+export async function listChunkingProfiles(): Promise<ChunkingProfile[]> {
+  return fetchAPI<ChunkingProfile[]>("/api/chunking/profiles");
+}
+
+export async function createChunkingProfile(data: ChunkingProfileCreate): Promise<ChunkingProfile> {
+  return fetchAPI<ChunkingProfile>("/api/chunking/profiles", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateChunkingProfile(
+  id: string,
+  data: ChunkingProfileUpdate
+): Promise<ChunkingProfile> {
+  return fetchAPI<ChunkingProfile>(`/api/chunking/profiles/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteChunkingProfile(id: string): Promise<void> {
+  await fetchAPI(`/api/chunking/profiles/${id}`, { method: "DELETE" });
+}
+
+export async function setDefaultChunkingProfile(
+  id: string
+): Promise<ChunkingProfile> {
+  return fetchAPI<ChunkingProfile>(`/api/chunking/profiles/${id}/default`, {
+    method: "POST",
+  });
+}
+
+export async function previewChunking(
+  request: ChunkPreviewRequest
+): Promise<ChunkPreview> {
+  return fetchAPI<ChunkPreview>("/api/chunking/preview", {
+    method: "POST",
+    body: JSON.stringify(request),
+  });
+}
+
+// ── 피드백 (Human-in-the-Loop RAG) ─────────────────────────────────────────
+
+export type FeedbackType = "thumbs_up" | "thumbs_down" | "correction";
+export type FeedbackTag =
+  | "irrelevant"
+  | "incomplete"
+  | "outdated"
+  | "hallucination"
+  | "wrong_source"
+  | "biased"
+  | "unclear";
+export type CorrectionType = "retrieval" | "answer";
+export type ImprovementTarget =
+  | "top_k"
+  | "chunk_size"
+  | "embedding_model"
+  | "prompt"
+  | "reindex";
+
+export interface Feedback {
+  id: string;
+  session_id: string;
+  query: string;
+  answer: string;
+  feedback_type: FeedbackType;
+  tags: FeedbackTag[];
+  comment: string;
+  correction_type: CorrectionType | null;
+  correction_text: string;
+  created_at: string;
+}
+
+export interface FeedbackCreate {
+  session_id?: string;
+  query?: string;
+  answer?: string;
+  feedback_type: FeedbackType;
+  tags?: FeedbackTag[];
+  comment?: string;
+  correction_type?: CorrectionType;
+  correction_text?: string;
+}
+
+export interface FeedbackStats {
+  total_feedbacks: number;
+  thumbs_up: number;
+  thumbs_down: number;
+  corrections: number;
+  satisfaction_rate: number;
+  tag_distribution: Record<string, number>;
+  recent_trend: { thumbs_up: number; thumbs_down: number };
+}
+
+export interface FeedbackSuggestion {
+  id: string;
+  target: ImprovementTarget;
+  title: string;
+  description: string;
+  priority: "high" | "medium" | "low";
+  affected_feedback_ids: string[];
+  data: Record<string, unknown>;
+  is_applied: boolean;
+  created_at: string;
+}
+
+export async function submitFeedback(data: FeedbackCreate): Promise<Feedback> {
+  return fetchAPI<Feedback>("/api/feedback", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function listFeedback(params?: {
+  feedback_type?: FeedbackType;
+  session_id?: string;
+  limit?: number;
+}): Promise<Feedback[]> {
+  const searchParams = new URLSearchParams();
+  if (params?.feedback_type) searchParams.set("feedback_type", params.feedback_type);
+  if (params?.session_id) searchParams.set("session_id", params.session_id);
+  if (params?.limit) searchParams.set("limit", String(params.limit));
+  const qs = searchParams.toString();
+  return fetchAPI<Feedback[]>(`/api/feedback${qs ? `?${qs}` : ""}`);
+}
+
+export async function getFeedbackStats(): Promise<FeedbackStats> {
+  return fetchAPI<FeedbackStats>("/api/feedback/stats");
+}
+
+export async function getFeedbackSuggestions(): Promise<FeedbackSuggestion[]> {
+  return fetchAPI<FeedbackSuggestion[]>("/api/feedback/suggestions");
+}
+
+export async function getSessionFeedback(sessionId: string): Promise<Feedback[]> {
+  return fetchAPI<Feedback[]>(`/api/feedback/session/${sessionId}`);
+}
