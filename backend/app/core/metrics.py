@@ -76,6 +76,10 @@ def extract_score(text: str) -> float:
     import re
 
     text = text.strip()
+    # 음수 기호가 붙은 경우 0.0 반환 (음수 점수는 무효)
+    # 먼저 음수 패턴을 확인
+    if re.match(r'^\s*-', text):
+        return 0.0
     match = re.search(r'(?:0\.\d+|1\.0+|[01])(?:\b|$)', text)
     if match:
         try:
