@@ -244,21 +244,21 @@ async def list_documents() -> DocumentListResponse:
     Returns:
         DocumentListResponse: 문서 목록과 전체 수
     """
-    # Qdrant에서 실제 문서 목록 조회 (영속적 소스)
-    qdrant = get_qdrant()
+    # 벡터 DB에서 실제 문서 목록 조회 (영속적 소스)
+    db = get_vector_db()
 
-    # Qdrant 연결 실패 시 빈 목록 대신 에러 명시
-    if not qdrant.collection_exists():
+    # 벡터 DB 연결 실패 시 빈 목록 대신 에러 명시
+    if not db.collection_exists():
         return DocumentListResponse(documents=[], total=0)
 
-    qdrant_docs = qdrant.list_documents()
+    db_docs = db.list_documents()
 
     # IndexingTracker에서 진행 중/실패 상태 병합
     tracker = get_tracker()
     tracker_states = {s["document_id"]: s for s in tracker.list_all()}
 
     documents = []
-    for doc in qdrant_docs:
+    for doc in db_docs:
         # 트래커에 진행 중인 상태가 있으면 우선 반영
         tracker_entry = tracker_states.get(doc["document_id"])
         status = IndexingStatus.COMPLETED
@@ -278,10 +278,10 @@ async def list_documents() -> DocumentListResponse:
             created_at=created_at,
         ))
 
-    # 트래커에만 있고 Qdrant에 없는 문서 (인덱싱 진행 중/실패)
-    qdrant_ids = {doc["document_id"] for doc in qdrant_docs}
+    # 트래커에만 있고 벡터 DB에 없는 문서 (인덱싱 진행 중/실패)
+    db_ids = {doc["document_id"] for doc in db_docs}
     for doc_id, state in tracker_states.items():
-        if doc_id not in qdrant_ids and state.get("status") in (
+        if doc_id not in db_ids and state.get("status") in (
             IndexingStatus.INDEXING,
             IndexingStatus.PENDING,
             IndexingStatus.FAILED,
