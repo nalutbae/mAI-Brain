@@ -930,37 +930,32 @@ export async function listSupportedVariables(): Promise<SupportedVariables> {
 export interface AgentToolInfo {
   name: string;
   description: string;
-  display_type: string;
+  parameters: Array<{ name: string; type: string; description: string; required: boolean }>;
 }
 
-export interface AgentToolResult {
-  tool_name: string;
-  success: boolean;
-  data: Record<string, unknown>;
-  error?: string;
-  display_type: string;
-}
-
-export interface AgentRequest {
-  question: string;
-  tools: string[];
-  tool_params?: Record<string, Record<string, unknown>>;
-  session_id?: string;
+export interface AgentStep {
+  type: "thinking" | "tool_call" | "tool_result";
+  content: string;
+  tool_name?: string;
+  tool_success?: boolean;
+  tool_display?: Record<string, unknown>;
 }
 
 export interface AgentResponse {
   answer: string;
-  tool_results: AgentToolResult[];
-  session_id?: string;
+  steps: AgentStep[];
+  tool_calls: AgentStep[];
+  is_agent: boolean;
 }
 
-export async function listAgentTools(): Promise<{ tools: AgentToolInfo[] }> {
-  return fetchAPI<{ tools: AgentToolInfo[] }>("/api/agent/tools");
+/** 개별 툴 실행 결과 (ChatInterface에서 사용) */
+export type AgentToolResult = AgentStep;
+
+export async function listAgentTools(): Promise<AgentToolInfo[]> {
+  return fetchAPI<AgentToolInfo[]>("/api/chat/agent/tools");
 }
 
-export async function agentChat(request: AgentRequest): Promise<AgentResponse> {
-  return fetchAPI<AgentResponse>("/api/agent/chat", {
-    method: "POST",
-    body: JSON.stringify(request),
-  });
-}
+// Agent mode uses the normal chatApi with @agent prefix — the backend
+// detects it and returns AgentResponse instead of ChatResponse.
+
+

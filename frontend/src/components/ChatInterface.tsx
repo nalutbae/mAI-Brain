@@ -5,14 +5,14 @@ import MessageBubble from "./MessageBubble";
 import ModeSelector from "./ModeSelector";
 import VoiceInput from "./VoiceInput";
 import TTSButton from "./TTSButton";
-import type { ChatMode, ReasoningStrength } from "../lib/api";
+import type { AgentToolResult, ChatMode, ReasoningStrength } from "../lib/api";
 import SourceDisplay from "./SourceDisplay";
 import AgentToolSelector from "./AgentToolSelector";
 import type { AgentToolInfo } from "../lib/api";
 import AgentResult from "./AgentResult";
-import { chatApi, getSession, submitFeedback, listAgentTools, agentChat } from "../lib/api";
+import { chatApi, getSession, submitFeedback, listAgentTools } from "../lib/api";
 import type { FeedbackType as ApiFeedbackType, FeedbackTag as ApiFeedbackTag, FeedbackCreate } from "../lib/api";
-import type { AgentToolResult } from "../lib/api";
+import type { AgentStep } from "../lib/api";
 import { analyzeCrossReasoning } from "../lib/cross-reasoning";
 import type { CrossReasoningReport } from "../lib/cross-reasoning";
 
@@ -90,10 +90,10 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   const loadAgentTools = async () => {
     try {
       const data = await listAgentTools();
-      setAvailableTools(data.tools);
+      setAvailableTools(data);
       setAgentToolsLoaded(true);
       // 기본으로 모든 도구 선택
-      setSelectedTools(data.tools.map((t) => t.name));
+      setSelectedTools(data.map((t) => t.name));
       setShowAgentTools(true);
     } catch (error) {
       console.error("Failed to load agent tools:", error);
@@ -140,16 +140,20 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
     setIsLoading(true);
 
     try {
-      const response = await agentChat({
+      const response = await chatApi({
         question: question || input.trim(),
-        tools: selectedTools,
+        mode: "fact",
         session_id: sessionId,
       });
 
       const aiMessage: Message = {
         role: "assistant",
         content: response.answer,
-        agentResults: response.tool_results,
+        agentResults: response.sources?.map((s) => ({
+          type: "tool_result" as const,
+          content: s.text.slice(0, 200),
+          tool_name: "agent",
+        })),
       };
 
       setMessages((prev) => [...prev, aiMessage]);
@@ -346,7 +350,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
               )}
               {/* Agent tool results display */}
               {message.agentResults && message.agentResults.length > 0 && (
-                <AgentResult results={message.agentResults} />
+                <AgentResult steps={message.agentResults} />
               )}
               {/* AI 응답에만 피드백 + TTS 버튼 표시 */}
               {message.role === "assistant" && !isLoading && (

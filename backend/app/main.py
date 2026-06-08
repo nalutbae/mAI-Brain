@@ -101,6 +101,7 @@ from app.api import (
     sessions,
     settings,
     voice,
+    widget,
     workspace,
 )
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
@@ -111,4 +112,5 @@ app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
+app.include_router(widget.router, prefix="/api/widget", tags=["widget"])
 app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])

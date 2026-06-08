@@ -1,56 +1,94 @@
 "use client";
 
-import type { AgentToolResult } from "../lib/api";
+import type { AgentStep } from "../lib/api";
 
 interface AgentResultProps {
-  results: AgentToolResult[];
+  steps: AgentStep[];
 }
 
-export default function AgentResult({ results }: AgentResultProps) {
-  if (!results || results.length === 0) return null;
+export default function AgentResult({ steps }: AgentResultProps) {
+  if (!steps || steps.length === 0) return null;
+
+  const toolResults = steps.filter((s) => s.type === "tool_result");
 
   return (
-    <div className="space-y-3 mt-2">
-      {results.map((result, index) => (
+    <div className="space-y-2 mt-2">
+      {/* Agent thinking steps (collapsed) */}
+      {steps.filter((s) => s.type === "thinking").length > 0 && (
+        <details className="text-xs">
+          <summary className="cursor-pointer text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
+            🤔 사고 과정 ({steps.filter((s) => s.type === "thinking").length}단계)
+          </summary>
+          <div className="mt-1 space-y-1 pl-2 border-l-2 border-gray-200 dark:border-gray-600">
+            {steps
+              .filter((s) => s.type === "thinking")
+              .map((step, i) => (
+                <p key={i} className="text-gray-500 dark:text-gray-400">
+                  {step.content.slice(0, 200)}
+                </p>
+              ))}
+          </div>
+        </details>
+      )}
+
+      {/* Tool call steps */}
+      {steps.filter((s) => s.type === "tool_call").length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {steps
+            .filter((s) => s.type === "tool_call")
+            .map((step, i) => (
+              <span
+                key={i}
+                className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full"
+              >
+                🔧 {step.tool_name || step.content.slice(0, 30)}
+              </span>
+            ))}
+        </div>
+      )}
+
+      {/* Tool results */}
+      {toolResults.map((step, index) => (
         <div
           key={index}
           className={`border rounded-lg p-3 ${
-            result.success
+            step.tool_success !== false
               ? "border-green-200 dark:border-green-700 bg-green-50 dark:bg-gray-800"
               : "border-red-200 dark:border-red-700 bg-red-50 dark:bg-gray-800"
           }`}
         >
           <div className="flex items-center gap-2 mb-2">
             <span className="text-sm font-semibold">
-              {getToolIcon(result.tool_name)} {getToolLabel(result.tool_name)}
+              {getToolIcon(step.tool_name || "")} {getToolLabel(step.tool_name || "")}
             </span>
             <span
               className={`text-xs px-2 py-0.5 rounded-full ${
-                result.success
+                step.tool_success !== false
                   ? "bg-green-200 text-green-800 dark:bg-green-700 dark:text-green-100"
                   : "bg-red-200 text-red-800 dark:bg-red-700 dark:text-red-100"
               }`}
             >
-              {result.success ? "성공" : "실패"}
+              {step.tool_success !== false ? "성공" : "실패"}
             </span>
           </div>
 
-          {!result.success && result.error && (
-            <p className="text-sm text-red-600 dark:text-red-400">
-              {result.error}
-            </p>
+          {step.tool_display && step.tool_display.type === "chart" && (
+            <ChartDisplay data={step.tool_display.data as Record<string, unknown>} />
           )}
 
-          {result.success && result.display_type === "chart" && (
-            <ChartDisplay data={result.data} />
+          {step.tool_display && step.tool_display.type === "text" && (
+            <TextDisplay
+              data={step.tool_display.data as Record<string, unknown>}
+              toolName={step.tool_name || ""}
+            />
           )}
 
-          {result.success && result.display_type === "text" && (
-            <TextDisplay data={result.data} toolName={result.tool_name} />
+          {step.tool_display && step.tool_display.type === "file" && (
+            <FileDisplay data={step.tool_display.data as Record<string, unknown>} />
           )}
 
-          {result.success && result.display_type === "file" && (
-            <FileDisplay data={result.data} />
+          {!step.tool_display && step.tool_success === false && (
+            <p className="text-sm text-red-600 dark:text-red-400">{step.content}</p>
           )}
         </div>
       ))}
@@ -61,7 +99,6 @@ export default function AgentResult({ results }: AgentResultProps) {
 function ChartDisplay({ data }: { data: Record<string, unknown> }) {
   const labels = (data.labels as string[]) || [];
   const datasets = (data.datasets as Array<{ label: string; data: number[] }>) || [];
-  const chartType = (data.type as string) || "bar";
   const title = (data.title as string) || "차트";
 
   if (!labels.length || !datasets.length) {
@@ -72,10 +109,7 @@ function ChartDisplay({ data }: { data: Record<string, unknown> }) {
 
   return (
     <div className="mt-2">
-      <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
-        📊 {title}
-      </p>
-      {/* Simple bar chart visualization */}
+      <p className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">📊 {title}</p>
       <div className="space-y-1">
         {labels.map((label, i) => {
           const values = datasets.map((d) => d.data[i] || 0);
@@ -102,7 +136,6 @@ function ChartDisplay({ data }: { data: Record<string, unknown> }) {
           );
         })}
       </div>
-      {/* Legend */}
       <div className="flex gap-3 mt-2 text-xs">
         {datasets.map((ds, j) => (
           <div key={j} className="flex items-center gap-1">
@@ -118,13 +151,7 @@ function ChartDisplay({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-function TextDisplay({
-  data,
-  toolName,
-}: {
-  data: Record<string, unknown>;
-  toolName: string;
-}) {
+function TextDisplay({ data, toolName }: { data: Record<string, unknown>; toolName: string }) {
   if (toolName === "web_search") {
     const results = (data.results as Array<{ title: string; snippet: string; url: string }>) || [];
     if (!results.length) {
@@ -142,9 +169,7 @@ function TextDisplay({
             >
               {r.title}
             </a>
-            <p className="text-gray-700 dark:text-gray-300 mt-0.5 text-xs">
-              {r.snippet}
-            </p>
+            <p className="text-gray-700 dark:text-gray-300 mt-0.5 text-xs">{r.snippet}</p>
           </div>
         ))}
       </div>
@@ -159,7 +184,6 @@ function TextDisplay({
     );
   }
 
-  // Default text display
   return (
     <div className="mt-2 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">
       {JSON.stringify(data, null, 2)}
@@ -173,10 +197,8 @@ function FileDisplay({ data }: { data: Record<string, unknown> }) {
       <p className="text-green-700 dark:text-green-300">
         ✅ {String(data.message || "파일 저장 완료")}
       </p>
-      {Boolean(data.file_path) && (
-        <p className="text-xs text-gray-500 mt-1 font-mono">
-          {String(data.file_path)}
-        </p>
+      {typeof data.file_path === "string" && data.file_path.length > 0 && (
+        <p className="text-xs text-gray-500 mt-1 font-mono">{String(data.file_path)}</p>
       )}
     </div>
   );

@@ -1,9 +1,9 @@
 """mAI-Brain — 임베디드 위젯 설정 저장소 및 토큰 발급
 
-JSON 파일 기반 위젯 설정 저장소.
+JSON 파일 기반 위젯 설정 저장소. 다중 위젯 설정 지원.
 HMAC-SHA256 기반 익명 토큰 발급 (외부 서비스 의존성 없음).
 
-저장 위치: backend/data/widget_settings.json
+저장 위치: backend/data/widget_settings.json (기본 위젯)
 """
 
 from __future__ import annotations
@@ -15,10 +15,11 @@ import logging
 import os
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from app.models.widget import WidgetSettings
+from app.models.widget import WidgetConfig, WidgetTheme, WidgetConfigUpdate, WidgetTokenResponse
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ def _get_token_secret() -> str:
     secret = os.environ.get("WIDGET_TOKEN_SECRET")
     if secret:
         return secret
-    # 폴백: 머신별 고정 시크릿 생성 (재시작 시 기존 토큰 무효화됨)
+    # 폴백: 머신별 고정 시크릿 생성
     secret_path = Path(__file__).resolve().parent.parent.parent / "data" / ".widget_secret"
     if secret_path.exists():
         return secret_path.read_text().strip()
@@ -57,7 +58,7 @@ def _get_token_secret() -> str:
 # 기본 설정
 # --------------------------------------------------------------------------- #
 
-_DEFAULT_SETTINGS = WidgetSettings()
+_DEFAULT_CONFIG = WidgetConfig()
 
 
 # --------------------------------------------------------------------------- #
@@ -67,7 +68,7 @@ _DEFAULT_SETTINGS = WidgetSettings()
 class WidgetSettingsStore:
     """JSON 파일 기반 위젯 설정 저장소.
 
-    설정 파일이 없으면 기본값을 생성합니다.
+    여러 위젯 설정을 하나의 JSON 파일에서 관리합니다.
     """
 
     def __init__(self, path: Optional[Path] = None):
@@ -75,9 +76,10 @@ class WidgetSettingsStore:
         self._ensure_file()
 
     def _ensure_file(self) -> None:
-        """설정 파일이 없으면 기본값으로 생성."""
+        """설정 파일이 없으면 기본 위젯 설정으로 생성."""
         if not self.path.exists():
-            self._write(_DEFAULT_SETTINGS.model_dump(mode="json"))
+            default = _DEFAULT_CONFIG.model_dump(mode="json")
+            self._write({"widgets": [default]})
 
     def _read(self) -> dict:
         """설정 파일 읽기."""
@@ -89,25 +91,71 @@ class WidgetSettingsStore:
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 
-    def get_settings(self) -> WidgetSettings:
-        """현재 위젯 설정 반환."""
+    def _find_widget(self, widget_id: str, widgets: list[dict]) -> Optional[tuple[int, dict]]:
+        for i, w in enumerate(widgets):
+            if w.get("id") == widget_id:
+                return i, w
+        return None
+
+    def list_widgets(self) -> list[WidgetConfig]:
+        """모든 위젯 설정 반환."""
         data = self._read()
-        # 병합: 저장된 값이 없는 필드는 기본값 사용
-        merged = _DEFAULT_SETTINGS.model_dump(mode="json")
-        merged.update(data)
-        return WidgetSettings(**merged)
+        return [WidgetConfig(**w) for w in data.get("widgets", [])]
 
-    def update_settings(self, updates: dict) -> WidgetSettings:
-        """위젯 설정 부분 업데이트.
+    def get_widget(self, widget_id: str) -> Optional[WidgetConfig]:
+        """특정 위젯 설정 반환."""
+        data = self._read()
+        result = self._find_widget(widget_id, data.get("widgets", []))
+        if result:
+            return WidgetConfig(**result[1])
+        return None
 
-        None이 아닌 필드만 업데이트합니다.
-        """
-        current = self._read()
-        for key, value in updates.items():
-            if value is not None:
-                current[key] = value
-        self._write(current)
-        return WidgetSettings(**current)
+    def create_widget(self, config: dict) -> WidgetConfig:
+        """새 위젯 설정 생성."""
+        data = self._read()
+        widgets = data.get("widgets", [])
+        new_config = _DEFAULT_CONFIG.model_dump(mode="json")
+        new_config.update(config)
+        new_config["id"] = secrets.token_hex(8)
+        new_config["created_at"] = datetime.now(timezone.utc).isoformat()
+        new_config["updated_at"] = new_config["created_at"]
+        widgets.append(new_config)
+        self._write({"widgets": widgets})
+        return WidgetConfig(**new_config)
+
+    def update_widget(self, widget_id: str, updates: WidgetConfigUpdate) -> Optional[WidgetConfig]:
+        """위젯 설정 업데이트."""
+        data = self._read()
+        widgets = data.get("widgets", [])
+        result = self._find_widget(widget_id, widgets)
+        if not result:
+            return None
+
+        idx, widget = result
+        update_dict = updates.model_dump(exclude_none=True)
+
+        if "theme" in update_dict and isinstance(update_dict["theme"], WidgetTheme):
+            widget.setdefault("theme", {})
+            for k, v in update_dict["theme"].model_dump(exclude_none=True).items():
+                widget["theme"][k] = v
+            del update_dict["theme"]
+
+        widget.update(update_dict)
+        widget["updated_at"] = datetime.now(timezone.utc).isoformat()
+        widgets[idx] = widget
+        self._write({"widgets": widgets})
+        return WidgetConfig(**widget)
+
+    def delete_widget(self, widget_id: str) -> bool:
+        """위젯 설정 삭제."""
+        data = self._read()
+        widgets = data.get("widgets", [])
+        result = self._find_widget(widget_id, widgets)
+        if result:
+            widgets.pop(result[0])
+            self._write({"widgets": widgets})
+            return True
+        return False
 
 
 # --------------------------------------------------------------------------- #
@@ -132,8 +180,8 @@ def get_widget_store() -> WidgetSettingsStore:
 class WidgetTokenIssuer:
     """익명 위젯 토큰 발급기.
 
-    HMAC-SHA256 기반 간단한 서명 토큰을 사용합니다.
-    외부 JWT 라이브러리 없이 동작하며, 익명 세션 식별에 충분합니다.
+    HMAC-SHA256 기반 간단한 서명 토큰.
+    외부 JWT 라이브러리 없이 동작.
     """
 
     TOKEN_VERSION = 1
@@ -144,20 +192,20 @@ class WidgetTokenIssuer:
 
     def issue_token(
         self,
+        widget_id: str,
         origin: str,
-        workspace_id: str = "default",
         ttl: int = DEFAULT_TTL,
     ) -> str:
         """익명 토큰 발급.
 
         토큰 형식: v{version}.{payload_base64}.{signature_hex}
-        페이로드: {workspace_id}:{origin}:{issued_at}:{expires_at}:{nonce}
+        페이로드: {widget_id}:{origin}:{issued_at}:{expires_at}:{nonce}
         """
         issued_at = int(time.time())
         expires_at = issued_at + ttl
         nonce = secrets.token_hex(8)
 
-        payload = f"{workspace_id}:{origin}:{issued_at}:{expires_at}:{nonce}"
+        payload = f"{widget_id}:{origin}:{issued_at}:{expires_at}:{nonce}"
         payload_b64 = _b64_encode(payload)
 
         signature = hmac.new(
@@ -172,7 +220,7 @@ class WidgetTokenIssuer:
         """토큰 검증 및 파싱.
 
         Returns:
-            검증 성공 시 {workspace_id, origin, issued_at, expires_at, nonce}
+            검증 성공 시 {widget_id, origin, issued_at, expires_at, nonce}
             실패 시 None
         """
         try:
@@ -184,7 +232,6 @@ class WidgetTokenIssuer:
             if not version_str.startswith("v"):
                 return None
 
-            # 서명 검증
             expected_sig = hmac.new(
                 self.secret.encode("utf-8"),
                 f"{version_str}.{payload_b64}".encode("utf-8"),
@@ -194,22 +241,20 @@ class WidgetTokenIssuer:
             if not hmac.compare_digest(signature, expected_sig):
                 return None
 
-            # 페이로드 디코딩
             payload = _b64_decode(payload_b64)
             fields = payload.split(":")
             if len(fields) != 5:
                 return None
 
-            workspace_id, origin, issued_at_str, expires_at_str, nonce = fields
+            widget_id, origin, issued_at_str, expires_at_str, nonce = fields
             issued_at = int(issued_at_str)
             expires_at = int(expires_at_str)
 
-            # 만료 검증
             if time.time() > expires_at:
                 return None
 
             return {
-                "workspace_id": workspace_id,
+                "widget_id": widget_id,
                 "origin": origin,
                 "issued_at": issued_at,
                 "expires_at": expires_at,

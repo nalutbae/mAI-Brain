@@ -5,7 +5,7 @@ import { useState } from "react";
 export interface AgentTool {
   name: string;
   description: string;
-  display_type: string;
+  display_type?: string;
 }
 
 interface AgentToolSelectorProps {
