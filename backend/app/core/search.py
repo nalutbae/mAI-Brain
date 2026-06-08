@@ -1,12 +1,12 @@
 """mAI-Brain AI 챗봇 — 하이브리드 검색 모듈
 
-질문 임베딩(dense+sparse) → Qdrant RRF 하이브리드 검색 → SearchResult 반환.
+질문 임베딩(dense+sparse) → 벡터 DB 검색 → SearchResult 반환.
 
 핵심 설계:
-- 검색 모드별 top-k 조절: 팩트(5), 요약(8), 컬럼(18)
+- 검색 모드별 top-k 조절: 팩트(5), 요약(8), 컬럼(18), 추론(15)
 - 검색 결과에 메타데이터(출처, 점수, 페이지) 포함
-- 인덱서(indexer.py)의 _token_to_index를 직접 임포트하여
-  인덱싱/검색 간 해시 로직이 한 곳(indexer.py)에만 정의됨
+- VectorDBProvider를 통해 Qdrant/Chroma/PGVector 전환 가능
+- sparse 벡터 지원 여부에 따라 검색 방식 자동 분기
 """
 
 from __future__ import annotations
@@ -15,33 +15,12 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from qdrant_client.models import Fusion, FusionQuery, Prefetch, SparseVector
-
 from app.config import ChatMode, get_settings
 from app.core.embedding import EmbeddingResult, get_embedding_provider
-from app.core.qdrant import QdrantManager, get_qdrant
-from app.ingestion.indexer import _token_to_index
+from app.core.vectordb import VectorDBProvider, get_vector_db
 from app.models.chat import SearchHit
 
 logger = logging.getLogger(__name__)
-
-
-def _sparse_dict_to_qdrant(sparse: dict[str, float]) -> SparseVector:
-    """bge-m3 lexical_weights → Qdrant SparseVector 변환.
-
-    Args:
-        sparse: {토큰문자열: 가중치} 딕셔너리
-
-    Returns:
-        SparseVector: Qdrant 검색 쿼리용
-    """
-    if not sparse:
-        return SparseVector(indices=[], values=[])
-
-    indices = [_token_to_index(k) for k in sparse.keys()]
-    values = list(sparse.values())
-
-    return SparseVector(indices=indices, values=values)
 
 
 # --------------------------------------------------------------------------- #
@@ -52,7 +31,7 @@ def _get_top_k(mode: ChatMode) -> int:
     """검색 모드에 따른 top-k 반환.
 
     Args:
-        mode: 채팅 모드 (fact/summary/column)
+        mode: 채팅 모드 (fact/summary/column/reasoning)
 
     Returns:
         검색 결과 수
@@ -93,25 +72,27 @@ def hybrid_search(
     query: str,
     mode: ChatMode = ChatMode.FACT,
     session_id: Optional[str] = None,
+    vdb: Optional[VectorDBProvider] = None,
 ) -> SearchResult:
-    """하이브리드 검색 수행.
+    """벡터 DB 검색 수행.
 
     파이프라인:
     1. 질문 임베딩 (dense + sparse) 생성
-    2. Qdrant RRF 하이브리드 검색 (dense + sparse 융합)
+    2. VectorDBProvider.search() 호출
     3. 검색 결과 → SearchHit 리스트 변환
 
     Args:
         query: 사용자 질문
         mode: 채팅 모드 (top-k 결정)
         session_id: 세션 ID (향후 세션별 필터링용, 현재 미사용)
+        vdb: 벡터 DB 프로바이더 (None이면 기본 인스턴스)
 
     Returns:
         SearchResult: 검색 결과 + 메타데이터
     """
     top_k = _get_top_k(mode)
     logger.info(
-        "하이브리드 검색: query='%s', mode=%s, top_k=%d",
+        "벡터 DB 검색: query='%s', mode=%s, top_k=%d",
         query[:50], mode.value, top_k,
     )
 
@@ -125,54 +106,28 @@ def hybrid_search(
 
     query_dense = embedding_result.dense[0]
 
-    # 2. Qdrant 검색 — sparse 유무에 따라 검색 방식 분기
-    qdrant: QdrantManager = get_qdrant()
+    # 2. VectorDB 검색
+    _vdb = vdb or get_vector_db()
 
-    # sparse 벡터 준비
-    has_sparse = bool(embedding_result.sparse and embedding_result.sparse[0])
+    # sparse 벡터 준비 — 프로바이더가 지원하는 경우만
+    query_sparse = None
+    if _vdb.supports_sparse() and embedding_result.sparse and embedding_result.sparse[0]:
+        query_sparse = embedding_result.sparse[0]
 
-    if has_sparse:
-        # 하이브리드 검색 (dense + sparse RRF 융합)
-        query_sparse_vec = _sparse_dict_to_qdrant(embedding_result.sparse[0])
-        prefetch = [
-            Prefetch(
-                query=query_dense,
-                using="dense",
-                limit=top_k * 2,
-            ),
-            Prefetch(
-                query=query_sparse_vec,
-                using="sparse",
-                limit=top_k * 2,
-            ),
-        ]
-        fusion_query = FusionQuery(fusion=Fusion.RRF)
-        response = qdrant.client.query_points(
-            collection_name=qdrant.collection_name,
-            query=fusion_query,
-            prefetch=prefetch,
-            limit=top_k,
-            with_payload=True,
-        )
-    else:
-        # API 임베딩 모드: dense-only 검색
-        logger.info("API 임베딩 모드 — dense-only 검색")
-        response = qdrant.client.query_points(
-            collection_name=qdrant.collection_name,
-            query=query_dense,
-            using="dense",
-            limit=top_k,
-            with_payload=True,
-        )
+    results = _vdb.search(
+        query_dense=query_dense,
+        query_sparse=query_sparse,
+        limit=top_k,
+    )
 
-    # 3. 검색 결과 변환
+    # 3. 검색 결과 변환 (VectorDBProvider.SearchHit → chat.SearchHit)
     hits: list[SearchHit] = []
-    for point in response.points:
-        payload = point.payload or {}
+    for hit in results:
+        payload = hit.payload
         hits.append(SearchHit(
             text=payload.get("text", ""),
             source=payload.get("source", "알 수 없음"),
-            score=point.score,
+            score=hit.score,
             chunk_index=payload.get("chunk_index"),
             page=payload.get("page"),
         ))

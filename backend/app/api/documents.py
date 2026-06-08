@@ -18,7 +18,7 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 
 from app.config import get_settings
-from app.core.qdrant import get_qdrant
+from app.core.vectordb import get_vector_db
 from app.ingestion.indexer import SUPPORTED_EXTENSIONS, index_document, index_directory
 from app.ingestion.indexer import get_tracker
 from app.models.document import (

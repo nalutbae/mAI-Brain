@@ -1,10 +1,10 @@
 """mAI-Brain AI 챗봇 — 채팅 관련 Pydantic 모델
 
-채팅 요청, 검색 결과, LLM 응답, 채팅 API 응답 모델을 정의합니다.
+채팅 요청, 검색 결과, LLM 응답, 채팅 API 응답, 에이전트 모델을 정의합니다.
 """
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
@@ -42,7 +42,7 @@ class ChatRequest(BaseModel):
     question: str = Field(
         ...,
         min_length=1,
-        description="사용자 질문 (조선어/한국어/영문 등 무관)",
+        description="사용자 질문 (한국어/영문 등 무관)",
     )
     mode: ChatMode = Field(
         default=ChatMode.FACT,
@@ -55,6 +55,10 @@ class ChatRequest(BaseModel):
     reasoning_strength: Optional[ReasoningStrength] = Field(
         default=None,
         description="추론 강도 필터 (추론 모드에서만 사용): all, strong, mid, weak",
+    )
+    workspace_id: Optional[str] = Field(
+        default=None,
+        description="워크스페이스 ID (커스텀 프롬프트 사용 시 전달)",
     )
 
 
@@ -75,7 +79,6 @@ class ChatResponse(BaseModel):
     mode: ChatMode = Field(..., description="사용된 검색 모드")
     session_id: str = Field(..., description="세션 ID")
 
-
 class ChatHistoryItem(BaseModel):
     """대화 기록 개별 항목"""
     role: str = Field(..., description="user 또는 assistant")
@@ -86,3 +89,56 @@ class ChatHistoryItem(BaseModel):
         description="검색 출처 (assistant 메시지에만)",
     )
     created_at: datetime = Field(..., description="메시지 생성 시각")
+
+
+# --------------------------------------------------------------------------- #
+# 에이전트 모드 모델
+# --------------------------------------------------------------------------- #
+
+class AgentStep(BaseModel):
+    """에이전트 실행 단계"""
+    type: str = Field(
+        ...,
+        description="단계 타입: thinking, tool_call, tool_result",
+    )
+    content: str = Field(..., description="단계 내용")
+    tool_name: Optional[str] = Field(
+        default=None,
+        description="도구 이름 (tool_call, tool_result 타입에만)",
+    )
+    tool_success: Optional[bool] = Field(
+        default=None,
+        description="도구 실행 성공 여부 (tool_result 타입에만)",
+    )
+    tool_display: Optional[dict] = Field(
+        default=None,
+        description="도구 결과 시각화 정보 (tool_result 타입에만)",
+    )
+
+
+class AgentToolCall(BaseModel):
+    """에이전트 도구 호출 기록 (API 응답 요약용)"""
+    tool_name: str = Field(..., description="도구 이름")
+    parameters: dict = Field(default={}, description="도구 파라미터")
+    success: bool = Field(..., description="실행 성공 여부")
+
+
+class AgentResponse(BaseModel):
+    """에이전트 모드 응답"""
+    answer: str = Field(..., description="에이전트 최종 답변 (한국어)")
+    steps: list[AgentStep] = Field(
+        default=[],
+        description="에이전트 실행 단계 (사고 과정, 도구 호출 등)",
+    )
+    tool_calls: list[AgentStep] = Field(
+        default=[],
+        description="도구 호출 단계만 필터링 (프론트엔드 표시용)",
+    )
+    is_agent: bool = Field(default=True, description="에이전트 모드 응답 여부")
+
+
+class AgentToolSpec(BaseModel):
+    """에이전트 도구 스펙 (API 응답용)"""
+    name: str = Field(..., description="도구 이름")
+    description: str = Field(..., description="도구 설명")
+    parameters: list[dict] = Field(default=[], description="파라미터 스펙 목록")

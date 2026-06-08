@@ -178,6 +178,15 @@ export async function getSession(id: string): Promise<{ session: Session; messag
   };
 }
 
+export async function deleteSession(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/sessions/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+}
+
 // ── RAG 평가 ─────────────────────────────────────────────────────────────
 
 export interface QAPair {
@@ -476,4 +485,281 @@ export async function getFeedbackSuggestions(): Promise<FeedbackSuggestion[]> {
 
 export async function getSessionFeedback(sessionId: string): Promise<Feedback[]> {
   return fetchAPI<Feedback[]>(`/api/feedback/session/${sessionId}`);
+}
+
+// ── 프로바이더 설정 ──────────────────────────────────────────────────────
+
+export type LLMProvider = "ollama" | "openai" | "anthropic" | "groq" | "deepseek" | "custom";
+export type EmbeddingProvider = "local" | "openai" | "jina" | "ollama" | "cohere";
+
+export interface LLMProviderConfig {
+  id: string;
+  provider: LLMProvider;
+  name: string;
+  api_key: string;  // 마스킹됨
+  base_url: string;
+  model: string;
+  is_active: boolean;
+  temperature: number;
+  max_tokens: number;
+  fallback_provider_id: string;
+  created_at: string;
+  updated_at: string;
+  effective_base_url: string;
+  effective_model: string;
+  display_name: string;
+}
+
+export interface EmbeddingConfig {
+  provider: EmbeddingProvider;
+  api_key: string;  // 마스킹됨
+  base_url: string;
+  model: string;
+  dim: number;
+}
+
+export interface ProviderDefaults {
+  provider: string;
+  default_base_url: string;
+  default_model: string;
+  supports_streaming: boolean;
+  supports_tools: boolean;
+  requires_api_key: boolean;
+}
+
+export interface ConnectionTestResult {
+  success: boolean;
+  message: string;
+  model_info?: string;
+  response_time_ms?: number;
+}
+
+// LLM 프로바이저 CRUD
+export async function listLLMProviders(): Promise<{ providers: LLMProviderConfig[]; active_id: string | null }> {
+  return fetchAPI("/api/settings/providers/llm");
+}
+
+export async function createLLMProvider(data: {
+  id?: string;
+  provider: LLMProvider;
+  name?: string;
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+  is_active?: boolean;
+  temperature?: number;
+  max_tokens?: number;
+  fallback_provider_id?: string;
+}): Promise<LLMProviderConfig> {
+  return fetchAPI("/api/settings/providers/llm", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateLLMProvider(
+  id: string,
+  data: Partial<Omit<LLMProviderConfig, "id" | "created_at" | "updated_at" | "effective_base_url" | "effective_model" | "display_name">>
+): Promise<LLMProviderConfig> {
+  return fetchAPI(`/api/settings/providers/llm/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteLLMProvider(id: string): Promise<{ message: string }> {
+  return fetchAPI(`/api/settings/providers/llm/${id}`, { method: "DELETE" });
+}
+
+export async function activateLLMProvider(id: string): Promise<LLMProviderConfig> {
+  return fetchAPI(`/api/settings/providers/llm/${id}/activate`, { method: "POST" });
+}
+
+// 임베딩 프로바이더
+export async function getEmbeddingProvider(): Promise<EmbeddingConfig> {
+  return fetchAPI("/api/settings/providers/embedding");
+}
+
+export async function updateEmbeddingProvider(data: {
+  provider: EmbeddingProvider;
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+  dim?: number;
+}): Promise<EmbeddingConfig> {
+  return fetchAPI("/api/settings/providers/embedding", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+// 사용 가능한 프로바이더 목록
+export async function listAvailableLLMProviders(): Promise<{ providers: ProviderDefaults[] }> {
+  return fetchAPI("/api/settings/providers/available/llm");
+}
+
+export async function listAvailableEmbeddingProviders(): Promise<{ providers: Array<{
+  provider: string;
+  description: string;
+  default_model: string;
+  default_base_url: string;
+  default_dim: number;
+  requires_api_key: boolean;
+}>}> {
+  return fetchAPI("/api/settings/providers/available/embedding");
+}
+
+// 연결 테스트
+export async function testProviderConnection(data: {
+  provider: LLMProvider;
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+}): Promise<ConnectionTestResult> {
+  return fetchAPI("/api/settings/providers/test", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// 전체 설정 조회
+export async function getFullSettings(): Promise<{
+  llm: { providers: LLMProviderConfig[]; active_id: string | null };
+  embedding: EmbeddingConfig;
+}> {
+  return fetchAPI("/api/settings/settings");
+}
+
+// ── 세션 내보내기 ──────────────────────────────────────────────────────
+
+export type ExportFormat = "markdown" | "json" | "csv";
+
+/**
+ * 단일 세션 대화 내보내기 (다운로드)
+ */
+export function exportSessionUrl(sessionId: string, format: ExportFormat = "markdown"): string {
+  return `${API_BASE_URL}/api/sessions/${sessionId}/export?format=${format}`;
+}
+
+/**
+ * 전체 세션 대화 내보내기 (다운로드)
+ */
+export function exportAllSessionsUrl(format: ExportFormat = "markdown"): string {
+  return `${API_BASE_URL}/api/sessions/export/all?format=${format}`;
+}
+
+/**
+ * 단일 세션 대화를 파일로 다운로드
+ */
+export async function downloadSessionExport(sessionId: string, format: ExportFormat): Promise<void> {
+  const url = exportSessionUrl(sessionId, format);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+  }
+
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get("Content-Disposition");
+  const filename = contentDisposition
+    ? contentDisposition.split("filename=")[1]?.replace(/"/g, "")
+    : `session-${sessionId.slice(0, 8)}.${format === "markdown" ? "md" : format}`;
+
+  // 브라우저 다운로드 트리거
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+}
+
+/**
+ * 전체 세션 대화를 파일로 다운로드
+ */
+export async function downloadAllSessionsExport(format: ExportFormat): Promise<void> {
+  const url = exportAllSessionsUrl(format);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+  }
+
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get("Content-Disposition");
+  const filename = contentDisposition
+    ? contentDisposition.split("filename=")[1]?.replace(/"/g, "")
+    : `conversations-all.${format === "markdown" ? "md" : format}`;
+
+  // 브라우저 다운로드 트리거
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+}
+
+// ── 워크스페이스 ──────────────────────────────────────────────────────────
+
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  system_prompt: string;
+  vector_collection: string;
+  document_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorkspaceCreate {
+  name: string;
+  description?: string;
+  system_prompt?: string;
+}
+
+export interface WorkspaceUpdate {
+  name?: string;
+  description?: string;
+  system_prompt?: string;
+}
+
+export interface WorkspaceListResponse {
+  workspaces: Workspace[];
+  total: number;
+}
+
+export async function listWorkspaces(): Promise<WorkspaceListResponse> {
+  return fetchAPI<WorkspaceListResponse>("/api/workspaces");
+}
+
+export async function createWorkspace(data: WorkspaceCreate): Promise<Workspace> {
+  return fetchAPI<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify(data) });
+}
+
+export async function getWorkspace(id: string): Promise<Workspace> {
+  return fetchAPI<Workspace>(`/api/workspaces/${id}`);
+}
+
+export async function updateWorkspace(id: string, data: WorkspaceUpdate): Promise<Workspace> {
+  return fetchAPI<Workspace>(`/api/workspaces/${id}`, { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function deleteWorkspace(id: string): Promise<{ message: string; workspace_id: string }> {
+  return fetchAPI(`/api/workspaces/${id}`, { method: "DELETE" });
+}
+
+export async function assignDocuments(workspaceId: string, documentIds: string[]): Promise<Workspace> {
+  return fetchAPI<Workspace>(`/api/workspaces/${workspaceId}/documents`, {
+    method: "POST",
+    body: JSON.stringify({ document_ids: documentIds, action: "assign" }),
+  });
+}
+
+export async function unassignDocuments(workspaceId: string, documentIds: string[]): Promise<Workspace> {
+  return fetchAPI<Workspace>(`/api/workspaces/${workspaceId}/documents`, {
+    method: "DELETE",
+    body: JSON.stringify({ document_ids: documentIds, action: "unassign" }),
+  });
 }

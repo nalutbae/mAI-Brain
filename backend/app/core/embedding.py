@@ -337,6 +337,116 @@ class OllamaEmbedding(EmbeddingProvider):
 
 
 # ---------------------------------------------------------------------------
+# CohereEmbedding — Cohere API 임베딩 (dense만)
+# ---------------------------------------------------------------------------
+
+class CohereEmbedding(EmbeddingProvider):
+    """Cohere API 임베딩 프로바이더 (dense만, sparse=None).
+
+    지원 모델:
+    - embed-multilingual-v3.0 (1024차원, 다국어 지원)
+    - embed-english-v3.0 (1024차원, 영어 특화)
+    - embed-multilingual-light-v3.0 (384차원, 가벼운 다국어)
+
+    API 키는 COHERE_API_KEY 환경변수 또는 .env 파일의 cohere_api_key로 설정.
+    """
+
+    # 모델별 기본 차원
+    MODEL_DIMS = {
+        "embed-multilingual-v3.0": 1024,
+        "embed-english-v3.0": 1024,
+        "embed-multilingual-light-v3.0": 384,
+    }
+
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+    ) -> None:
+        import os  # noqa: PLC0415
+
+        s = get_settings()
+
+        self._model = model or s.embedding_api_model or "embed-multilingual-v3.0"
+        self._api_key = api_key or s.cohere_api_key or os.environ.get("COHERE_API_KEY", "")
+
+        if not self._api_key:
+            raise ValueError(
+                "Cohere API 키가 필요합니다. "
+                "COHERE_API_KEY 환경변수를 설정하거나 "
+                ".env 파일에 COHERE_API_KEY를 추가하세요."
+            )
+
+        # 차원 수 자동 감지
+        self._dim = self.MODEL_DIMS.get(self._model, 1024)
+
+        # 지연 임포트 — cohere는 선택 의존성
+        try:
+            import cohere  # noqa: PLC0415
+        except ImportError as exc:
+            raise ImportError(
+                "cohere 패키지가 필요합니다: pip install cohere"
+            ) from exc
+
+        self._client = cohere.ClientV2(api_key=self._api_key)
+        logger.info(
+            "CohereEmbedding 초기화: model=%s, dim=%d",
+            self._model, self._dim,
+        )
+
+    def encode(self, texts: list[str]) -> EmbeddingResult:
+        """Cohere 임베딩 API로 dense 벡터만 생성 (sparse=None).
+
+        Cohere API는 입력 유형(input_type)을 요구합니다:
+        - 검색 쿼리: "search_query"
+        - 문서 인덱싱: "search_document"
+        현재는 문서 인덱싱으로 통일 (배치 검색 시에도 문서 임베딩 사용).
+        """
+        if not texts:
+            return EmbeddingResult(dense=[], sparse=None)
+
+        # 배치 처리: Cohere API는 한 번에 최대 96개 지원
+        batch_size = 96
+        all_dense: list[list[float]] = []
+
+        try:
+            import numpy as np  # noqa: PLC0415
+        except ImportError:
+            np = None  # type: ignore[assignment]
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            response = self._client.embed(
+                texts=batch,
+                model=self._model,
+                input_type="search_document",
+                embedding_types=["float"],
+            )
+
+            # 응답에서 임베딩 추출
+            if hasattr(response, 'embeddings') and response.embeddings:
+                embeddings = response.embeddings
+                if hasattr(embeddings, 'float') and embeddings.float:
+                    batch_embeddings = embeddings.float
+                else:
+                    # v1 응답 형식
+                    batch_embeddings = embeddings
+            else:
+                raise ValueError(f"Cohere 응답에서 임베딩을 찾을 수 없음: {response}")
+
+            # numpy → list 변환
+            for emb in batch_embeddings:
+                if np is not None and isinstance(emb, np.ndarray):
+                    all_dense.append(emb.tolist())
+                elif isinstance(emb, list):
+                    all_dense.append(emb)
+                else:
+                    all_dense.append(list(emb))
+
+        return EmbeddingResult(dense=all_dense, sparse=None)
+
+
+# ---------------------------------------------------------------------------
 # 팩토리
 # ---------------------------------------------------------------------------
 
@@ -350,7 +460,7 @@ def get_embedding_provider(force_new: bool = False) -> EmbeddingProvider:
         force_new: True면 기존 인스턴스 무시하고 새로 생성 (테스트용).
 
     Returns:
-        LocalBGEM3, APIEmbedding, 또는 OllamaEmbedding 인스턴스.
+        LocalBGEM3, APIEmbedding, OllamaEmbedding, 또는 CohereEmbedding 인스턴스.
     """
     global _provider_instance
 
@@ -366,10 +476,12 @@ def get_embedding_provider(force_new: bool = False) -> EmbeddingProvider:
         _provider_instance = APIEmbedding()
     elif provider == EmbeddingProviderType.OLLAMA:
         _provider_instance = OllamaEmbedding()
+    elif provider == EmbeddingProviderType.COHERE:
+        _provider_instance = CohereEmbedding()
     else:
         raise ValueError(
             f"알 수 없는 EMBEDDING_PROVIDER: {provider!r}  "
-            "('local', 'api', 'ollama' 중 하나)"
+            "('local', 'api', 'ollama', 'cohere' 중 하나)"
         )
 
     return _provider_instance

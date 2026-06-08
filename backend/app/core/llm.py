@@ -1,12 +1,13 @@
 """mAI-Brain AI 챗봇 — LLM 클라이언트 모듈
 
 ollama-cloud(1순위) + DeepSeek API(2순위) LLM 호출.
-시스템 프롬프트: 조선어 원문 인용, 한국어 답변, 환각 방지.
+시스템 프롬프트: 워크스페이스/모드별 커스터마이제이션 지원.
 
 핵심 설계:
 - OpenAI 호환 엔드포인트로 ollama-cloud 호출
 - DeepSeek API 폴백 (ollama-cloud 실패 시)
 - 이전 대화 컨텍스트를 프롬프트에 포함하여 이어서 대화 가능
+- 커스텀 시스템 프롬프트 (워크스페이스/모드별) 지원
 """
 
 from __future__ import annotations
@@ -23,10 +24,10 @@ logger = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
-# 시스템 프롬프트 (아이디어.md 섹션 5.3 기반)
+# 시스템 프롬프트 (기본값 — 데이터스토어에 커스텀 프롬프트가 없을 때 사용)
 # --------------------------------------------------------------------------- #
 
-SYSTEM_PROMPT = """\
+DEFAULT_SYSTEM_PROMPT = """\
 당신은 업로드된 문서를 분석하고 답변하는 도메인 특화 문서 AI입니다.
 
 규칙:
@@ -37,8 +38,8 @@ SYSTEM_PROMPT = """\
 5. 필요시 원문 용어와 일반 용어의 대조를 주석으로 제공하라.\
 """
 
-# 모드별 추가 지시사항
-MODE_INSTRUCTIONS: dict[ChatMode, str] = {
+# 모드별 추가 지시사항 (기본값)
+DEFAULT_MODE_INSTRUCTIONS: dict[ChatMode, str] = {
     ChatMode.FACT: """\
 [팩트 조회 모드]
 - 정확한 사실만 답변하라.
@@ -87,10 +88,7 @@ MODE_INSTRUCTIONS: dict[ChatMode, str] = {
 }
 
 
-# --------------------------------------------------------------------------- #
 # 추론 강도별 추가 프롬프트
-# --------------------------------------------------------------------------- #
-
 REASONING_STRENGTH_INSTRUCTIONS: dict[ReasoningStrength, str] = {
     ReasoningStrength.ALL: "",  # 기본 추론 프롬프트 그대로 사용
     ReasoningStrength.STRONG: """\
@@ -130,10 +128,7 @@ def _get_reasoning_instruction(strength: Optional[ReasoningStrength]) -> str:
     return REASONING_STRENGTH_INSTRUCTIONS.get(strength, "")
 
 
-# --------------------------------------------------------------------------- #
 # 컬럼 모드 근거 강도별 추가 프롬프트
-# --------------------------------------------------------------------------- #
-
 COLUMN_STRENGTH_INSTRUCTIONS: dict[ReasoningStrength, str] = {
     ReasoningStrength.ALL: "",
     ReasoningStrength.STRONG: """\
@@ -162,6 +157,47 @@ def _get_column_strength_instruction(strength: Optional[ReasoningStrength]) -> s
     if strength is None or strength == ReasoningStrength.ALL:
         return ""
     return COLUMN_STRENGTH_INSTRUCTIONS.get(strength, "")
+
+
+# --------------------------------------------------------------------------- #
+# 프롬프트 해석 — 커스텀 프롬프트 > 기본 프롬프트
+# --------------------------------------------------------------------------- #
+
+def get_system_prompt_text(
+    mode: ChatMode,
+    workspace_id: Optional[str] = None,
+) -> str:
+    """모드+워크스페이스에 대한 시스템 프롬프트 텍스트 반환.
+
+    우선순위:
+    1. 커스텀 프롬프트 (워크스페이스+모드에 지정된 경우)
+    2. 기본 프롬프트 (데이터스토어의 is_default)
+    3. 하드코딩 DEFAULT_SYSTEM_PROMPT / DEFAULT_MODE_INSTRUCTIONS
+    """
+    try:
+        from app.core.system_prompt import get_system_prompt_store, render_prompt
+        store = get_system_prompt_store()
+        effective = store.get_effective_prompt(mode=mode, workspace_id=workspace_id)
+
+        if effective is not None:
+            # 커스텀 또는 기본 프롬프트 — 변수 치환 후 반환
+            context = store.build_context(workspace_id=workspace_id)
+            rendered, _, _ = render_prompt(effective.prompt_text, context)
+            return rendered
+    except Exception as exc:
+        logger.warning("커스텀 프롬프트 로드 실패, 하드코딩 사용: %s", exc)
+
+    # 폴백: 하드코딩 프롬프트
+    return DEFAULT_MODE_INSTRUCTIONS.get(mode, DEFAULT_SYSTEM_PROMPT)
+
+
+def get_base_system_prompt(workspace_id: Optional[str] = None) -> str:
+    """베이스 시스템 프롬프트 (모드 지시사항 앞에 추가).
+
+    일반적으로 DEFAULT_SYSTEM_PROMPT을 사용하되,
+    커스텀 프롬프트가 전체 시스템 프롬프트를 대체하지 않는 경우 기반이 됨.
+    """
+    return DEFAULT_SYSTEM_PROMPT
 
 
 # --------------------------------------------------------------------------- #
@@ -194,6 +230,7 @@ class LLMClient:
         mode: ChatMode = ChatMode.FACT,
         chat_history: Optional[list[dict[str, str]]] = None,
         reasoning_strength: Optional[ReasoningStrength] = None,
+        workspace_id: Optional[str] = None,
     ) -> str:
         """검색 결과를 바탕으로 LLM 답변 생성.
 
@@ -203,6 +240,7 @@ class LLMClient:
             mode: 채팅 모드
             chat_history: 이전 대화 기록 [{"role": "user/assistant", "content": "..."}]
             reasoning_strength: 추론 강도 필터 (추론 모드에서만 사용)
+            workspace_id: 워크스페이스 ID (커스텀 프롬프트 조회용)
 
         Returns:
             AI 답변 (한국어)
@@ -213,8 +251,11 @@ class LLMClient:
         # 사용자 프롬프트 구성
         user_message = self._build_user_prompt(query, context_text, mode)
 
-        # 메시지 시퀀스 구성
-        messages = self._build_messages(mode, user_message, chat_history, reasoning_strength)
+        # 메시지 시퀀스 구성 (workspace_id로 커스텀 프롬프트 로드)
+        messages = self._build_messages(
+            mode, user_message, chat_history, reasoning_strength,
+            workspace_id=workspace_id,
+        )
 
         # LLM 호출 — provider 순서대로 시도
         # 추론 모드는 더 긴 응답이 필요하므로 max_tokens 상향
@@ -240,7 +281,7 @@ class LLMClient:
                 return answer
 
         # 모든 provider 실패
-        raise RuntimeError("모든 LLM 제공자 호출 실패 — ollama-cloud와 DeepSeek API 모두 응답하지 않습니다.")
+        raise RuntimeError("모든 LLM 제공자 호출 실패 — ollama-cloud과 DeepSeek API 모두 응답하지 않습니다.")
 
     # ------------------------------------------------------------------- #
     # 프롬프트 구성
@@ -282,17 +323,20 @@ class LLMClient:
         user_message: str,
         chat_history: Optional[list[dict[str, str]]] = None,
         reasoning_strength: Optional[ReasoningStrength] = None,
+        workspace_id: Optional[str] = None,
     ) -> list[dict[str, str]]:
         """OpenAI Chat API 메시지 시퀀스 구성.
 
-        시스템 프롬프트 → 이전 대화 기록 → 현재 사용자 메시지.
+        시스템 프롬프트 → 모드 지시사항 → 이전 대화 기록 → 현재 사용자 메시지.
+        workspace_id가 제공되면 커스텀 프롬프트를 사용.
         """
+        # 베이스 시스템 프롬프트
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": get_base_system_prompt(workspace_id)},
         ]
 
-        # 모드별 추가 지시사항
-        mode_instruction = MODE_INSTRUCTIONS.get(mode)
+        # 모드별 추가 지시사항 (커스텀 프롬프트 또는 기본)
+        mode_instruction = get_system_prompt_text(mode=mode, workspace_id=workspace_id)
         if mode_instruction:
             # 추론/컬럼 모드 + 강도 지정 시: 강도별 추가 지시사항 덧붙임
             if reasoning_strength:

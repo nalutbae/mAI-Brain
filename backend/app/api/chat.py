@@ -4,14 +4,8 @@
 - POST /api/chat: 채팅 요청 (질문 + 모드 → 검색 → LLM → 답변)
 - GET /api/chat/history/{session_id}: 세션 대화 기록 조회
 
-핵심 플로우:
-1. 사용자 질문 수신
-2. 세션 ID 확인 (없으면 자동 생성)
-3. 하이브리드 검색 (mode별 top-k)
-4. 이전 대화 컨텍스트 로드
-5. LLM 호출 (검색 결과 + 대화 기록)
-6. 답변 + 검색 출처 반환
-7. 대화 기록 저장
+에이전트 모드:
+- @agent 프리픽스 감지 → 에이전트 모드 활성화 → 도구 호출 → 결과 포함 응답
 """
 
 from __future__ import annotations
@@ -22,36 +16,73 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from app.config import ChatMode
+from app.core.agent_runner import detect_agent_mode, run_agent
 from app.core.llm import get_llm_client
 from app.core.search import hybrid_search
 from app.core.session_store import get_session_store
-from app.models.chat import ChatHistoryItem, ChatRequest, ChatResponse, SearchHit
-from app.models.session import SessionCreateRequest
+from app.models.chat import (
+    ChatHistoryItem,
+    ChatRequest,
+    ChatResponse,
+    AgentResponse,
+    AgentToolSpec,
+    SearchHit,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.post("", response_model=ChatResponse)
+@router.post("", response_model=ChatResponse | AgentResponse)
 async def create_chat(request: ChatRequest):
     """채팅 요청 처리.
 
-    플로우: 질문 → 하이브리드 검색 → LLM 답변 생성 → 응답 + 대화 저장
+    플로우:
+    1. @agent 프리픽스 감지 → 에이전트 모드
+    2. 일반 모드: 질문 → 하이브리드 검색 → LLM 답변 생성 → 응답 + 대화 저장
 
     요청 바디:
         question: 사용자 질문
-        mode: 채팅 모드 (fact/summary/column)
+        mode: 채팅 모드 (fact/summary/column/reasoning)
         session_id: 세션 ID (선택, 없으면 자동 생성)
-
-    응답:
-        answer: AI 답변
-        sources: 검색 출처 (출처 정보 포함)
-        mode: 사용된 검색 모드
-        session_id: 세션 ID
     """
     store = get_session_store()
 
+    # ── 에이전트 모드 감지 ────────────────────────────────────────────── #
+    is_agent, cleaned_query = detect_agent_mode(request.question)
+
+    if is_agent:
+        return await _handle_agent_mode(cleaned_query, request.session_id)
+
+    # ── 일반 채팅 모드 ──────────────────────────────────────────────── #
+    return await _handle_normal_mode(request, store)
+
+
+async def _handle_agent_mode(query: str, session_id: Optional[str]) -> AgentResponse:
+    """에이전트 모드 처리
+
+    @agent 프리픽스가 감지된 경우:
+    1. ToolRegistry에서 도구 목록 조회
+    2. LLM이 도구 선택/실행
+    3. 결과를 포함한 종합 응답 반환
+    """
+    logger.info("에이전트 모드 활성화: %s", query[:50])
+
+    try:
+        agent_response = await run_agent(query=query, session_id=session_id)
+        return agent_response
+    except Exception as exc:
+        logger.error("에이전트 모드 오류: %s", exc, exc_info=True)
+        return AgentResponse(
+            answer=f"에이전트 모드 실행 중 오류가 발생했습니다: {exc}",
+            steps=[],
+            tool_calls=[],
+        )
+
+
+async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
+    """일반 채팅 모드 처리 (기존 로직)"""
     # 1. 세션 확인 / 자동 생성
     session_id = request.session_id
     if session_id:
@@ -64,7 +95,6 @@ async def create_chat(request: ChatRequest):
             )
     else:
         # 새 세션 자동 생성
-        # 질문 앞부분을 세션 제목으로 사용
         title = request.question[:30] + ("..." if len(request.question) > 30 else "")
         session_data = store.create_session(title=title)
         session_id = session_data["session_id"]
@@ -83,7 +113,7 @@ async def create_chat(request: ChatRequest):
             detail=f"검색 중 오류가 발생했습니다: {exc}",
         ) from exc
 
-    # 3. 이전 대화 기록 로드 (이어서 대화 컨텍스트)
+    # 3. 이전 대화 기록 로드
     chat_history = store.get_chat_history(session_id, limit=10)
 
     # 4. LLM 답변 생성
@@ -99,8 +129,6 @@ async def create_chat(request: ChatRequest):
         )
     except Exception as exc:
         logger.error("LLM 오류: %s", exc, exc_info=True)
-        # LLM 실패 시에도 검색 결과는 반환
-        # 대화 기록은 저장하지 않음 (재시도 시 동일 질문 가능)
         return ChatResponse(
             answer=f"AI 모델 응답 생성 중 오류가 발생했습니다: {exc}",
             sources=search_result.hits if search_result.hits else None,
@@ -109,7 +137,6 @@ async def create_chat(request: ChatRequest):
         )
 
     # 5. 대화 기록 저장
-    # 사용자 메시지
     store.add_message(
         session_id=session_id,
         role="user",
@@ -117,12 +144,11 @@ async def create_chat(request: ChatRequest):
         mode=request.mode.value,
     )
 
-    # AI 응답 메시지 (sources 포함)
     sources_for_db = None
     if search_result.hits:
         sources_for_db = [
             {
-                "text": h.text[:200],  # 저장 시 텍스트는 200자로 축약
+                "text": h.text[:200],
                 "source": h.source,
                 "score": h.score,
                 "page": h.page,
@@ -149,13 +175,9 @@ async def create_chat(request: ChatRequest):
 
 @router.get("/history/{session_id}", response_model=list[ChatHistoryItem])
 async def get_chat_history(session_id: str):
-    """세션 대화 기록 조회.
-
-    이전 대화 내용을 페이지에 표시할 때 사용.
-    """
+    """세션 대화 기록 조회."""
     store = get_session_store()
 
-    # 세션 존재 확인
     session = store.get_session(session_id)
     if session is None:
         raise HTTPException(
@@ -167,7 +189,6 @@ async def get_chat_history(session_id: str):
 
     history = []
     for msg in messages:
-        # sources 파싱 (assistant 메시지만)
         sources = None
         if msg.get("sources"):
             sources = [SearchHit(**s) for s in msg["sources"]]
@@ -181,3 +202,21 @@ async def get_chat_history(session_id: str):
         ))
 
     return history
+
+
+# ── 에이전트 도구 API ───────────────────────────────────────────────────── #
+
+@router.get("/agent/tools", response_model=list[AgentToolSpec])
+async def list_agent_tools():
+    """사용 가능한 에이전트 도구 목록 조회"""
+    from app.core.agent_tools.registry import get_tool_registry
+    registry = get_tool_registry()
+    tools = registry.list_tools()
+    return [
+        AgentToolSpec(
+            name=tool.name,
+            description=tool.description,
+            parameters=[p.model_dump() for p in tool.parameters],
+        )
+        for tool in tools
+    ]
