@@ -6,8 +6,8 @@ import type {
   DocumentConflict,
   DocumentAgreement,
   CrossReasoningReport,
-} from "../lib/cross-reasoning";
-import { analyzeCrossReasoning } from "../lib/cross-reasoning";
+} from "../../lib/cross-reasoning";
+import { analyzeCrossReasoning } from "../../lib/cross-reasoning";
 
 // ── 모순 유형 라벨 매핑 ──────────────────────────────────────────────────
 

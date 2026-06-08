@@ -6,7 +6,7 @@ import ModeSelector from "./ModeSelector";
 import type { ChatMode, ReasoningStrength } from "../lib/api";
 import SourceDisplay from "./SourceDisplay";
 import { chatApi, getSession } from "../lib/api";
-import { analyzeCrossDocument, type CrossAnalysis } from "../lib/cross-reasoning";
+import { analyzeCrossReasoning, type CrossReasoningReport } from "../lib/cross-reasoning";
 import { submitFeedback, type FeedbackType, type FeedbackTag } from "../lib/feedback";
 
 interface ChatInterfaceProps {
@@ -27,7 +27,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   const [reasoningStrength, setReasoningStrength] = useState<ReasoningStrength>("all");
   const [isLoading, setIsLoading] = useState(false);
   const [sourceOpen, setSourceOpen] = useState(false);
-  const [crossAnalysis, setCrossAnalysis] = useState<CrossAnalysis | null>(null);
+  const [crossAnalysis, setCrossAnalysis] = useState<CrossReasoningReport | null>(null);
   const [isCrossAnalyzing, setIsCrossAnalyzing] = useState(false);
   const [showCrossResult, setShowCrossResult] = useState(false);
   const [feedbackGiven, setFeedbackGiven] = useState<Record<number, FeedbackType>>({});
@@ -122,12 +122,12 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
     setShowCrossResult(true);
 
     try {
-      const result = await analyzeCrossDocument({
+      const result = await analyzeCrossReasoning({
         query: lastUserMessage.content,
         mode,
-        max_sub_queries: 3,
+        sub_queries: undefined,
       });
-      setCrossAnalysis(result);
+      setCrossAnalysis(result.report);
     } catch (error) {
       console.error("Cross-document analysis failed:", error);
       setCrossAnalysis(null);
@@ -221,10 +221,10 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                     모순: {crossAnalysis.conflicts.length}개
                   </span>
                   <span className="text-green-600 dark:text-green-400">
-                    합의: {crossAnalysis.consensuses.length}개
+                    합의: {crossAnalysis.agreements.length}개
                   </span>
                   <span className="text-blue-600 dark:text-blue-400">
-                    신뢰도: {(crossAnalysis.confidence_score * 100).toFixed(0)}%
+                    신뢰도: {(crossAnalysis.confidence * 100).toFixed(0)}%
                   </span>
                 </div>
                 {crossAnalysis.conflicts.length > 0 && (
@@ -235,29 +235,29 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                     <div className="mt-1 space-y-1">
                       {crossAnalysis.conflicts.map((c, i) => (
                         <div key={i} className="pl-2 border-l-2 border-red-300 dark:border-red-600">
-                          <p className="font-medium">{c.topic}</p>
+                          <p className="font-medium">{c.description}</p>
                           <p className="text-xs text-gray-600 dark:text-gray-400">
-                            {c.source_a}: {c.claim_a.slice(0, 80)}...
+                            {c.document_a}: {c.claim_a.slice(0, 80)}...
                           </p>
                           <p className="text-xs text-gray-600 dark:text-gray-400">
-                            {c.source_b}: {c.claim_b.slice(0, 80)}...
+                            {c.document_b}: {c.claim_b.slice(0, 80)}...
                           </p>
                         </div>
                       ))}
                     </div>
                   </details>
                 )}
-                {crossAnalysis.consensuses.length > 0 && (
+                {crossAnalysis.agreements.length > 0 && (
                   <details>
                     <summary className="cursor-pointer font-medium text-green-700 dark:text-green-300">
                       합의/일치 지점
                     </summary>
                     <div className="mt-1 space-y-1">
-                      {crossAnalysis.consensuses.map((c, i) => (
+                      {crossAnalysis.agreements.map((a, i) => (
                         <div key={i} className="pl-2 border-l-2 border-green-300 dark:border-green-600">
-                          <p className="font-medium">{c.topic}</p>
+                          <p className="font-medium">{a.theme}</p>
                           <p className="text-xs text-gray-600 dark:text-gray-400">
-                            {c.consensus.slice(0, 100)}... (출처: {c.sources.join(", ")})
+                            {a.description.slice(0, 100)}... (출처: {a.documents.join(", ")})
                           </p>
                         </div>
                       ))}
