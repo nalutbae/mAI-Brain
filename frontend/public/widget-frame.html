@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>mAI-Brain Chat Widget</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, sans-serif;
+    }
+    iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+    }
+  </style>
+</head>
+<body>
+  <!--
+    mAI-Brain 임베디드 채팅 위젯 — iframe 삽입용 최소 HTML 페이지.
+
+    사용법:
+      <iframe src="https://yourdomain.com/widget-frame.html"
+              width="380" height="600"
+              style="border:none; border-radius:16px;"
+              allow="clipboard-write"></iframe>
+
+    URL 파라미터로 커스터마이징 가능:
+      ?theme=dark&primary_color=%23ff6b6b&greeting=Hello!
+  -->
+  <script>
+    (function() {
+      // URL 파라미터에서 커스터마이징 옵션 읽기
+      const params = new URLSearchParams(window.location.search);
+
+      // 위젯 페이지 URL (기본: /widget)
+      const widgetUrl = params.get("widget_url") || "/widget";
+
+      // 위젯 URL에 파라미터 전달 (테마, 색상 등)
+      const widgetParams = new URLSearchParams();
+      const keysToForward = ["theme", "primary_color", "greeting", "position"];
+      keysToForward.forEach(function(key) {
+        if (params.get(key)) {
+          widgetParams.set(key, params.get(key));
+        }
+      });
+
+      const fullUrl = widgetParams.toString()
+        ? widgetUrl + "?" + widgetParams.toString()
+        : widgetUrl;
+
+      // iframe 생성
+      var iframe = document.createElement("iframe");
+      iframe.src = fullUrl;
+      iframe.setAttribute("title", "mAI-Brain 채팅");
+      iframe.setAttribute("allow", "clipboard-write");
+      iframe.style.width = "100%";
+      iframe.style.height = "100%";
+      iframe.style.border = "none";
+
+      document.body.appendChild(iframe);
+    })();
+  </script>
+</body>
+</html>

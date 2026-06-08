@@ -1,13 +1,12 @@
 """mAI-Brain AI 챗봇 — 인덱싱 파이프라인
 
-문서 파일 → 텍스트 추출 → 청킹 → 임베딩 → Qdrant upsert 전체 파이프라인.
+문서 파일 → 텍스트 추출 → 청킹 → 임베딩 → 벡터 DB upsert 전체 파이프라인.
 
 핵심 설계:
 - index_document(): 단일 파일 인덱싱 (재업로드 시 기존 포인트 삭제 후 재삽입)
 - index_directory(): 디렉토리 내 지원 파일 일괄 인덱싱
 - 인덱싱 진행 상태 로깅
-- Qdrant sparse 벡터는 token_id(정수)를 인덱스로 사용하므로,
-  bge-m3 lexical_weights의 문자열 토큰을 해싱하여 정수 인덱스로 변환
+- VectorDBProvider를 통해 Qdrant/Chroma/PGVector 전환 가능
 """
 
 from __future__ import annotations
@@ -17,13 +16,11 @@ import logging
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
-
-from qdrant_client.models import PointStruct, SparseVector
+from typing import Any, Optional
 
 from app.config import get_settings
 from app.core.embedding import EmbeddingProvider, EmbeddingResult, get_embedding_provider
-from app.core.qdrant import QdrantManager, get_qdrant
+from app.core.vectordb import VectorDBProvider, get_vector_db, UpsertResult
 from app.ingestion.chunker import Chunk, chunk_text
 from app.ingestion.parser import ExtractResult, extract_text
 from app.models.chunking import ChunkingProfile
@@ -34,44 +31,6 @@ logger = logging.getLogger(__name__)
 
 # 지원 파일 확장자
 SUPPORTED_EXTENSIONS = {".pdf", ".epub", ".txt"}
-
-
-# ---------------------------------------------------------------------------
-# 토큰 해시 유틸리티
-# ---------------------------------------------------------------------------
-
-def _token_to_index(token: str) -> int:
-    """문자열 토큰을 정수 인덱스로 변환 (Qdrant sparse vector 요구사항).
-
-    bge-m3의 lexical_weights는 {토큰문자열: 가중치} 형태이지만,
-    Qdrant의 SparseVector는 indices: list[int] 를 요구.
-    해시 충돌 가능성은 있지만, sparse 검색 보조 용도이므로 실질적 영향 미미.
-
-    Args:
-        token: bge-m3에서 추출한 토큰 문자열
-
-    Returns:
-        음이 아닌 정수 인덱스
-    """
-    return abs(hash(token)) % (2**31)
-
-
-def _sparse_dict_to_qdrant(sparse: dict[str, float]) -> SparseVector:
-    """bge-m3 lexical_weights → Qdrant SparseVector 변환.
-
-    Args:
-        sparse: {토큰문자열: 가중치} 딕셔너리
-
-    Returns:
-        SparseVector: Qdrant 포인트 삽입용
-    """
-    if not sparse:
-        return SparseVector(indices=[], values=[])
-
-    indices = [_token_to_index(k) for k in sparse.keys()]
-    values = list(sparse.values())
-
-    return SparseVector(indices=indices, values=values)
 
 
 # ---------------------------------------------------------------------------
@@ -157,13 +116,13 @@ def get_tracker() -> IndexingTracker:
 def index_document(
     file_path: str,
     embedding_provider: Optional[EmbeddingProvider] = None,
-    qdrant: Optional[QdrantManager] = None,
+    vdb: Optional[VectorDBProvider] = None,
     tracker: Optional[IndexingTracker] = None,
     profile_name: Optional[str] = None,
 ) -> IndexResult:
     """단일 문서 인덱싱.
 
-    파이프라인: extract_text → chunk_text → encode → qdrant upsert
+    파이프라인: extract_text → chunk_text → encode → vdb.upsert
 
     동일 파일 재업로드 시:
     1. 기존 포인트를 source(파일명) 기준으로 삭제
@@ -172,7 +131,7 @@ def index_document(
     Args:
         file_path: 인덱싱할 파일 경로
         embedding_provider: 임베딩 제공자 (None이면 기본 인스턴스)
-        qdrant: Qdrant 관리자 (None이면 기본 인스턴스)
+        vdb: 벡터 DB 프로바이더 (None이면 기본 인스턴스)
         tracker: 상태 추적기 (None이면 기본 인스턴스)
         profile_name: 청킹 프로파일 이름 (None이면 기본 설정 사용)
 
@@ -183,7 +142,7 @@ def index_document(
     filename = path.name
     document_id = _generate_document_id(filename)
     _tracker = tracker or get_tracker()
-    _qdrant = qdrant or get_qdrant()
+    _vdb = vdb or get_vector_db()
     _embedding = embedding_provider or get_embedding_provider()
 
     _tracker.start(document_id, filename)
@@ -237,14 +196,14 @@ def index_document(
         texts = [c.text for c in chunks]
         embedding_result: EmbeddingResult = _embedding.encode(texts)
 
-        # 4. Qdrant upsert
-        logger.info("  [4/4] Qdrant upsert")
+        # 4. 벡터 DB upsert
+        logger.info("  [4/4] 벡터 DB upsert (%s)", type(_vdb).__name__)
 
         # 컬렉션 존재 확인 (delete_by_source보다 먼저!)
-        _qdrant.init_collection()
+        _vdb.create_collection(dim=embedding_result.dim)
 
         # 동일 파일 기존 포인트 삭제 (재업로드)
-        _qdrant.delete_by_source(filename)
+        _vdb.delete_by_source(filename)
 
         # 포인트 생성
         points = _build_points(
@@ -253,7 +212,7 @@ def index_document(
             embedding_result=embedding_result,
         )
 
-        _qdrant.upsert_points(points)
+        _vdb.upsert(points)
 
         # 완료
         _tracker.complete(document_id, len(chunks))
@@ -281,7 +240,7 @@ def index_document(
 def index_directory(
     dir_path: str,
     embedding_provider: Optional[EmbeddingProvider] = None,
-    qdrant: Optional[QdrantManager] = None,
+    vdb: Optional[VectorDBProvider] = None,
     tracker: Optional[IndexingTracker] = None,
 ) -> list[IndexResult]:
     """디렉토리 내 모든 지원 파일 일괄 인덱싱.
@@ -289,7 +248,7 @@ def index_directory(
     Args:
         dir_path: 인덱싱할 디렉토리 경로
         embedding_provider: 임베딩 제공자
-        qdrant: Qdrant 관리자
+        vdb: 벡터 DB 프로바이더
         tracker: 상태 추적기
 
     Returns:
@@ -318,7 +277,7 @@ def index_directory(
         result = index_document(
             str(file_path),
             embedding_provider=embedding_provider,
-            qdrant=qdrant,
+            vdb=vdb,
             tracker=tracker,
         )
         results.append(result)
@@ -344,7 +303,6 @@ def _generate_document_id(filename: str) -> str:
 
     같은 파일명은 같은 ID를 가져야 재업로드 시 상태를 조회 가능.
     hashlib.sha256을 사용하여 프로세스 재시작에도 동일한 ID 보장.
-    (Python 내장 hash()는 세션마다 salt가 달라 결과가 불안정함)
 
     Args:
         filename: 파일명
@@ -352,7 +310,6 @@ def _generate_document_id(filename: str) -> str:
     Returns:
         'doc-' 접두사가 붙은 식별자 문자열
     """
-    # SHA-256 해시로 결정론적 ID 생성 (동일 파일명 = 동일 ID, 프로세스 무관)
     h = int(hashlib.sha256(filename.encode("utf-8")).hexdigest(), 16) % (10**10)
     return f"doc-{h}"
 
@@ -361,13 +318,16 @@ def _build_points(
     document_id: str,
     chunks: list[Chunk],
     embedding_result: EmbeddingResult,
-) -> list[PointStruct]:
-    """청크 + 임베딩 결과 → Qdrant PointStruct 리스트 변환.
+) -> list[dict[str, Any]]:
+    """청크 + 임베딩 결과 → 벡터 DB 포인트 리스트 변환.
 
     각 포인트:
     - id: UUID (청크별 고유)
-    - vector: {dense: [...], sparse: SparseVector}
+    - vector: {dense: [...], 선택 "sparse": dict}
     - payload: 청크 메타데이터 + document_id
+
+    Qdrant 전용 PointStruct 대신 일반 dict를 반환하여
+    모든 VectorDBProvider에서 사용 가능.
 
     Args:
         document_id: 문서 식별자
@@ -375,7 +335,7 @@ def _build_points(
         embedding_result: 임베딩 결과 (dense + sparse)
 
     Returns:
-        list[PointStruct]: Qdrant 삽입용 포인트 리스트
+        list[dict]: 벡터 DB 삽입용 포인트 리스트
     """
     points = []
     has_sparse = embedding_result.sparse is not None
@@ -385,8 +345,10 @@ def _build_points(
 
         # Vector 구성 — sparse가 없으면 dense만 포함 (API 임베딩 모드)
         if has_sparse and embedding_result.sparse:
-            sparse_vec = _sparse_dict_to_qdrant(embedding_result.sparse[idx])
-            vector = {"dense": dense_vec, "sparse": sparse_vec}
+            vector = {
+                "dense": dense_vec,
+                "sparse": embedding_result.sparse[idx],
+            }
         else:
             vector = {"dense": dense_vec}
 
@@ -397,11 +359,11 @@ def _build_points(
             "text": chunk.text,
         }
 
-        point = PointStruct(
-            id=str(uuid.uuid4()),
-            vector=vector,
-            payload=payload,
-        )
+        point = {
+            "id": str(uuid.uuid4()),
+            "vector": vector,
+            "payload": payload,
+        }
         points.append(point)
 
     return points

@@ -1,0 +1,20 @@
+    @abstractmethod
+    def search(
+        self,
+        query_dense: list[float],
+        query_sparse: Optional[dict[str, float]] = None,
+        limit: int = 5,
+        collection_name: Optional[str] = None,
+    ) -> list["SearchHit"]:
+        """벡터 검색.
+
+        Args:
+            query_dense: 질의 dense 벡터
+            query_sparse: 질의 sparse 벡터 (지원 시, {토큰: 가중치})
+            limit: 반환할 결과 수
+            collection_name: 검색 대상 컬렉션 이름 (None이면 기본 컬렉션)
+
+        Returns:
+            검색 결과 리스트
+        """
+        ...

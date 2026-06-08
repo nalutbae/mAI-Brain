@@ -47,6 +47,7 @@ export interface ChatRequest {
   mode: ChatMode;
   session_id?: string;
   reasoning_strength?: ReasoningStrength;
+  workspace_id?: string;
 }
 
 export interface ChatResponse {
@@ -176,6 +177,15 @@ export async function getSession(id: string): Promise<{ session: Session; messag
     ...data,
     session: { ...data, id: data.session_id },
   };
+}
+
+export async function deleteSession(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/api/sessions/${id}`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
 }
 
 // ── RAG 평가 ─────────────────────────────────────────────────────────────
@@ -478,6 +488,221 @@ export async function getSessionFeedback(sessionId: string): Promise<Feedback[]>
   return fetchAPI<Feedback[]>(`/api/feedback/session/${sessionId}`);
 }
 
+// ── 프로바이더 설정 ──────────────────────────────────────────────────────
+
+export type LLMProvider = "ollama" | "openai" | "anthropic" | "groq" | "deepseek" | "custom";
+export type EmbeddingProvider = "local" | "openai" | "jina" | "ollama" | "cohere";
+
+export interface LLMProviderConfig {
+  id: string;
+  provider: LLMProvider;
+  name: string;
+  api_key: string;  // 마스킹됨
+  base_url: string;
+  model: string;
+  is_active: boolean;
+  temperature: number;
+  max_tokens: number;
+  fallback_provider_id: string;
+  created_at: string;
+  updated_at: string;
+  effective_base_url: string;
+  effective_model: string;
+  display_name: string;
+}
+
+export interface EmbeddingConfig {
+  provider: EmbeddingProvider;
+  api_key: string;  // 마스킹됨
+  base_url: string;
+  model: string;
+  dim: number;
+}
+
+export interface ProviderDefaults {
+  provider: string;
+  default_base_url: string;
+  default_model: string;
+  supports_streaming: boolean;
+  supports_tools: boolean;
+  requires_api_key: boolean;
+}
+
+export interface ConnectionTestResult {
+  success: boolean;
+  message: string;
+  model_info?: string;
+  response_time_ms?: number;
+}
+
+// LLM 프로바이더 CRUD
+export async function listLLMProviders(): Promise<{ providers: LLMProviderConfig[]; active_id: string | null }> {
+  return fetchAPI("/api/settings/providers/llm");
+}
+
+export async function createLLMProvider(data: {
+  id?: string;
+  provider: LLMProvider;
+  name?: string;
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+  is_active?: boolean;
+  temperature?: number;
+  max_tokens?: number;
+  fallback_provider_id?: string;
+}): Promise<LLMProviderConfig> {
+  return fetchAPI("/api/settings/providers/llm", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateLLMProvider(
+  id: string,
+  data: Partial<Omit<LLMProviderConfig, "id" | "created_at" | "updated_at" | "effective_base_url" | "effective_model" | "display_name">>
+): Promise<LLMProviderConfig> {
+  return fetchAPI(`/api/settings/providers/llm/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteLLMProvider(id: string): Promise<{ message: string }> {
+  return fetchAPI(`/api/settings/providers/llm/${id}`, { method: "DELETE" });
+}
+
+export async function activateLLMProvider(id: string): Promise<LLMProviderConfig> {
+  return fetchAPI(`/api/settings/providers/llm/${id}/activate`, { method: "POST" });
+}
+
+// 임베딩 프로바이더
+export async function getEmbeddingProvider(): Promise<EmbeddingConfig> {
+  return fetchAPI("/api/settings/providers/embedding");
+}
+
+export async function updateEmbeddingProvider(data: {
+  provider: EmbeddingProvider;
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+  dim?: number;
+}): Promise<EmbeddingConfig> {
+  return fetchAPI("/api/settings/providers/embedding", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+// 사용 가능한 프로바이더 목록
+export async function listAvailableLLMProviders(): Promise<{ providers: ProviderDefaults[] }> {
+  return fetchAPI("/api/settings/providers/available/llm");
+}
+
+export async function listAvailableEmbeddingProviders(): Promise<{
+  providers: Array<{
+    provider: string;
+    description: string;
+    default_model: string;
+    default_base_url: string;
+    default_dim: number;
+    requires_api_key: boolean;
+  }>;
+}> {
+  return fetchAPI("/api/settings/providers/available/embedding");
+}
+
+// 연결 테스트
+export async function testProviderConnection(data: {
+  provider: LLMProvider;
+  api_key?: string;
+  base_url?: string;
+  model?: string;
+}): Promise<ConnectionTestResult> {
+  return fetchAPI("/api/settings/providers/test", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+// 전체 설정 조회
+export async function getFullSettings(): Promise<{
+  llm: { providers: LLMProviderConfig[]; active_id: string | null };
+  embedding: EmbeddingConfig;
+}> {
+  return fetchAPI("/api/settings/settings");
+}
+
+// ── 세션 내보내기 ──────────────────────────────────────────────────────
+
+export type ExportFormat = "markdown" | "json" | "csv";
+
+/**
+ * 단일 세션 대화 내보내기 (다운로드)
+ */
+export function exportSessionUrl(sessionId: string, format: ExportFormat = "markdown"): string {
+  return `${API_BASE_URL}/api/sessions/${sessionId}/export?format=${format}`;
+}
+
+/**
+ * 전체 세션 대화 내보내기 (다운로드)
+ */
+export function exportAllSessionsUrl(format: ExportFormat = "markdown"): string {
+  return `${API_BASE_URL}/api/sessions/export/all?format=${format}`;
+}
+
+/**
+ * 단일 세션 대화를 파일로 다운로드
+ */
+export async function downloadSessionExport(sessionId: string, format: ExportFormat): Promise<void> {
+  const url = exportSessionUrl(sessionId, format);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+  }
+
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get("Content-Disposition");
+  const filename = contentDisposition
+    ? contentDisposition.split("filename=")[1]?.replace(/"/g, "")
+    : `session-${sessionId.slice(0, 8)}.${format === "markdown" ? "md" : format}`;
+
+  // 브라우저 다운로드 트리거
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+}
+
+/**
+ * 전체 세션 대화를 파일로 다운로드
+ */
+export async function downloadAllSessionsExport(format: ExportFormat): Promise<void> {
+  const url = exportAllSessionsUrl(format);
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`Export failed: ${response.status} ${response.statusText}`);
+  }
+
+  const blob = await response.blob();
+  const contentDisposition = response.headers.get("Content-Disposition");
+  const filename = contentDisposition
+    ? contentDisposition.split("filename=")[1]?.replace(/"/g, "")
+    : `conversations-all.${format === "markdown" ? "md" : format}`;
+
+  // 브라우저 다운로드 트리거
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(link.href);
+}
+
 // ── 워크스페이스 ──────────────────────────────────────────────────────────
 
 export interface Workspace {
@@ -513,10 +738,7 @@ export async function listWorkspaces(): Promise<WorkspaceListResponse> {
 }
 
 export async function createWorkspace(data: WorkspaceCreate): Promise<Workspace> {
-  return fetchAPI<Workspace>("/api/workspaces", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
+  return fetchAPI<Workspace>("/api/workspaces", { method: "POST", body: JSON.stringify(data) });
 }
 
 export async function getWorkspace(id: string): Promise<Workspace> {
@@ -524,10 +746,7 @@ export async function getWorkspace(id: string): Promise<Workspace> {
 }
 
 export async function updateWorkspace(id: string, data: WorkspaceUpdate): Promise<Workspace> {
-  return fetchAPI<Workspace>(`/api/workspaces/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(data),
-  });
+  return fetchAPI<Workspace>(`/api/workspaces/${id}`, { method: "PUT", body: JSON.stringify(data) });
 }
 
 export async function deleteWorkspace(id: string): Promise<{ message: string; workspace_id: string }> {
@@ -545,5 +764,203 @@ export async function unassignDocuments(workspaceId: string, documentIds: string
   return fetchAPI<Workspace>(`/api/workspaces/${workspaceId}/documents`, {
     method: "DELETE",
     body: JSON.stringify({ document_ids: documentIds, action: "unassign" }),
+  });
+}
+
+// ── 음성 인터페이스 ──────────────────────────────────────────────────────
+
+export interface STTResponse {
+  text: string;
+  language: string;
+  duration_seconds?: number;
+  provider: string;
+}
+
+export interface VoiceStatus {
+  stt_provider: string | null;
+  tts_provider: string | null;
+  message: string;
+}
+
+/**
+ * 음성 → 텍스트 변환 (서버 Whisper API)
+ * 브라우저 Web Speech API를 사용할 수 없을 때 폴백으로 사용
+ */
+export async function speechToText(audioBlob: Blob, language = "ko"): Promise<STTResponse> {
+  const formData = new FormData();
+  formData.append("file", audioBlob, "recording.webm");
+  return fetchAPI<STTResponse>(`/api/voice/stt?language=${language}`, {
+    method: "POST",
+    body: formData,
+    headers: {}, // Content-Type은 브라우저가 multipart로 설정
+  });
+}
+
+/**
+ * 텍스트 → 음성 변환 (서버 ElevenLabs API)
+ * MP3 오디오 Blob을 반환합니다
+ */
+export async function textToSpeech(
+  text: string,
+  options?: { voiceId?: string; speed?: number }
+): Promise<Blob> {
+  const response = await fetch(`${API_BASE_URL}/api/voice/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text,
+      voice_id: options?.voiceId,
+      language: "ko",
+      speed: options?.speed ?? 1.0,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`TTS API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response.blob();
+}
+
+/**
+ * 음성 API 상태 확인
+ */
+export async function getVoiceStatus(): Promise<VoiceStatus> {
+  return fetchAPI<VoiceStatus>("/api/voice");
+}
+
+// ── 시스템 프롬프트 ──────────────────────────────────────────────────────
+
+export type PromptMode = "fact" | "summary" | "column" | "reasoning";
+
+export interface SystemPrompt {
+  id: string;
+  workspace_id: string | null;
+  mode: PromptMode;
+  prompt_text: string;
+  variables: string[];
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SystemPromptCreate {
+  workspace_id?: string | null;
+  mode: PromptMode;
+  prompt_text: string;
+  is_default?: boolean;
+}
+
+export interface SystemPromptUpdate {
+  prompt_text?: string;
+  is_default?: boolean;
+}
+
+export interface SystemPromptPreview {
+  id: string;
+  mode: PromptMode;
+  workspace_id: string | null;
+  original_text: string;
+  rendered_text: string;
+  variables_used: string[];
+  variables_missing: string[];
+}
+
+export interface SystemPromptListResponse {
+  prompts: SystemPrompt[];
+  total: number;
+}
+
+export interface SupportedVariables {
+  variables: Record<string, string>;
+}
+
+export async function listPrompts(params?: {
+  workspace_id?: string;
+  mode?: PromptMode;
+}): Promise<SystemPromptListResponse> {
+  const searchParams = new URLSearchParams();
+  if (params?.workspace_id) searchParams.set("workspace_id", params.workspace_id);
+  if (params?.mode) searchParams.set("mode", params.mode);
+  const qs = searchParams.toString();
+  return fetchAPI<SystemPromptListResponse>(`/api/prompts${qs ? `?${qs}` : ""}`);
+}
+
+export async function createPrompt(data: SystemPromptCreate): Promise<SystemPrompt> {
+  return fetchAPI<SystemPrompt>("/api/prompts", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function getPrompt(id: string): Promise<SystemPrompt> {
+  return fetchAPI<SystemPrompt>(`/api/prompts/${id}`);
+}
+
+export async function updatePrompt(id: string, data: SystemPromptUpdate): Promise<SystemPrompt> {
+  return fetchAPI<SystemPrompt>(`/api/prompts/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePrompt(id: string): Promise<{ message: string; id: string }> {
+  return fetchAPI(`/api/prompts/${id}`, { method: "DELETE" });
+}
+
+export async function previewPrompt(id: string, workspace_id?: string): Promise<SystemPromptPreview> {
+  const searchParams = new URLSearchParams();
+  if (workspace_id) searchParams.set("workspace_id", workspace_id);
+  const qs = searchParams.toString();
+  return fetchAPI<SystemPromptPreview>(`/api/prompts/${id}/preview${qs ? `?${qs}` : ""}`, {
+    method: "POST",
+  });
+}
+
+export async function listDefaultPrompts(): Promise<SystemPromptListResponse> {
+  return fetchAPI<SystemPromptListResponse>("/api/prompts/defaults");
+}
+
+export async function listSupportedVariables(): Promise<SupportedVariables> {
+  return fetchAPI<SupportedVariables>("/api/prompts/variables");
+}
+
+// ── 에이전트 모드 ─────────────────────────────────────────────────────────
+
+export interface AgentToolInfo {
+  name: string;
+  description: string;
+  display_type: string;
+}
+
+export interface AgentToolResult {
+  tool_name: string;
+  success: boolean;
+  data: Record<string, unknown>;
+  error?: string;
+  display_type: string;
+}
+
+export interface AgentRequest {
+  question: string;
+  tools: string[];
+  tool_params?: Record<string, Record<string, unknown>>;
+  session_id?: string;
+}
+
+export interface AgentResponse {
+  answer: string;
+  tool_results: AgentToolResult[];
+  session_id?: string;
+}
+
+export async function listAgentTools(): Promise<{ tools: AgentToolInfo[] }> {
+  return fetchAPI<{ tools: AgentToolInfo[] }>("/api/agent/tools");
+}
+
+export async function agentChat(request: AgentRequest): Promise<AgentResponse> {
+  return fetchAPI<AgentResponse>("/api/agent/chat", {
+    method: "POST",
+    body: JSON.stringify(request),
   });
 }

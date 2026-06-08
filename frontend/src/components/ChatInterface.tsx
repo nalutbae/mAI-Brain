@@ -1,12 +1,18 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import MessageBubble from "./MessageBubble";
 import ModeSelector from "./ModeSelector";
+import VoiceInput from "./VoiceInput";
+import TTSButton from "./TTSButton";
 import type { ChatMode, ReasoningStrength } from "../lib/api";
 import SourceDisplay from "./SourceDisplay";
-import { chatApi, getSession, submitFeedback } from "../lib/api";
+import AgentToolSelector from "./AgentToolSelector";
+import type { AgentToolInfo } from "../lib/api";
+import AgentResult from "./AgentResult";
+import { chatApi, getSession, submitFeedback, listAgentTools, agentChat } from "../lib/api";
 import type { FeedbackType as ApiFeedbackType, FeedbackTag as ApiFeedbackTag, FeedbackCreate } from "../lib/api";
+import type { AgentToolResult } from "../lib/api";
 import { analyzeCrossReasoning } from "../lib/cross-reasoning";
 import type { CrossReasoningReport } from "../lib/cross-reasoning";
 
@@ -19,6 +25,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: string[];
+  agentResults?: AgentToolResult[];  // 에이전트 도구 결과
 }
 
 const FEEDBACK_TAGS: { value: ApiFeedbackTag; label: string }[] = [
@@ -28,6 +35,8 @@ const FEEDBACK_TAGS: { value: ApiFeedbackTag; label: string }[] = [
   { value: "hallucination", label: "환각" },
   { value: "outdated", label: "구식 정보" },
 ];
+
+const AGENT_TRIGGER = "@agent";
 
 export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -43,6 +52,14 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   const [showFeedbackTags, setShowFeedbackTags] = useState<number | null>(null);
   const [feedbackComment, setFeedbackComment] = useState("");
   const [selectedTags, setSelectedTags] = useState<ApiFeedbackTag[]>([]);
+  const [interimTranscript, setInterimTranscript] = useState("");
+
+  // Agent mode state
+  const [availableTools, setAvailableTools] = useState<AgentToolInfo[]>([]);
+  const [selectedTools, setSelectedTools] = useState<string[]>([]);
+  const [showAgentTools, setShowAgentTools] = useState(false);
+  const [agentToolsLoaded, setAgentToolsLoaded] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 세션이 변경될 때 메시지 로드
@@ -56,6 +73,32 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  // @agent 프리픽스 감지 → 도구 목록 로드
+  useEffect(() => {
+    const trimmed = input.trim();
+    if (trimmed.startsWith(AGENT_TRIGGER) && !agentToolsLoaded && !isLoading) {
+      loadAgentTools();
+    }
+    // @agent가 아닌 다른 입력으로 바뀌면 도구 선택 UI 숨기기
+    if (!trimmed.startsWith(AGENT_TRIGGER) && showAgentTools) {
+      setShowAgentTools(false);
+      setSelectedTools([]);
+    }
+  }, [input]);
+
+  const loadAgentTools = async () => {
+    try {
+      const data = await listAgentTools();
+      setAvailableTools(data.tools);
+      setAgentToolsLoaded(true);
+      // 기본으로 모든 도구 선택
+      setSelectedTools(data.tools.map((t) => t.name));
+      setShowAgentTools(true);
+    } catch (error) {
+      console.error("Failed to load agent tools:", error);
+    }
+  };
 
   const loadSessionMessages = async (id: string) => {
     try {
@@ -71,8 +114,19 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
     }
   };
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  const handleToggleTool = (toolName: string) => {
+    setSelectedTools((prev) =>
+      prev.includes(toolName)
+        ? prev.filter((t) => t !== toolName)
+        : [...prev, toolName]
+    );
+  };
+
+  const handleAgentSubmit = async () => {
+    if (!input.trim() || isLoading || selectedTools.length === 0) return;
+
+    // @agent 프리픽스 제거한 질문 추출
+    const question = input.trim().replace(new RegExp(`^${AGENT_TRIGGER}\\s*`), "");
 
     const userMessage: Message = {
       role: "user",
@@ -81,6 +135,69 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
 
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
+    setInterimTranscript("");
+    setShowAgentTools(false);
+    setIsLoading(true);
+
+    try {
+      const response = await agentChat({
+        question: question || input.trim(),
+        tools: selectedTools,
+        session_id: sessionId,
+      });
+
+      const aiMessage: Message = {
+        role: "assistant",
+        content: response.answer,
+        agentResults: response.tool_results,
+      };
+
+      setMessages((prev) => [...prev, aiMessage]);
+
+      if (!sessionId && response.session_id && onSessionStart) {
+        onSessionStart(response.session_id);
+      }
+    } catch (error) {
+      console.error("Failed to execute agent:", error);
+      const errorMessage: Message = {
+        role: "assistant",
+        content: "에이전트 실행 중 오류가 발생했습니다.",
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+      setSelectedTools([]);
+    }
+  };
+
+  const handleCancelAgent = () => {
+    setShowAgentTools(false);
+    setSelectedTools([]);
+    setInput("");
+  };
+
+  const handleSend = async () => {
+    if (!input.trim() || isLoading) return;
+
+    // @agent 모드인 경우 → agent 핸들러로 위임
+    if (input.trim().startsWith(AGENT_TRIGGER)) {
+      if (!agentToolsLoaded) {
+        await loadAgentTools();
+      }
+      if (availableTools.length > 0) {
+        setShowAgentTools(true);
+      }
+      return;
+    }
+
+    const userMessage: Message = {
+      role: "user",
+      content: input.trim(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    setInterimTranscript("");
     setIsLoading(true);
 
     try {
@@ -120,6 +237,24 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
       handleSend();
     }
   };
+
+  // 음성 인식 완료 시 텍스트 입력에 반영
+  const handleVoiceTranscript = useCallback(
+    (text: string) => {
+      if (!text.trim()) return;
+      // 기존 입력에 이어서 추가 (띄어쓰기 구분)
+      setInput((prev) => {
+        const separator = prev && !prev.endsWith(" ") && !prev.endsWith("\n") ? " " : "";
+        return prev + separator + text.trim();
+      });
+    },
+    []
+  );
+
+  // 음성 인식 중간 결과 표시
+  const handleInterimTranscript = useCallback((text: string) => {
+    setInterimTranscript(text);
+  }, []);
 
   const handleCrossAnalysis = async () => {
     const lastUserMessage = [...messages].reverse().find((m) => m.role === "user");
@@ -191,7 +326,12 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
-            <p>질문을 입력해주세요</p>
+            <div className="text-center space-y-2">
+              <p>질문을 입력해주세요</p>
+              <p className="text-xs text-gray-300 dark:text-gray-600">
+                Tip: <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">@agent</code>를 입력하면 에이전트 모드가 활성화됩니다
+              </p>
+            </div>
           </div>
         ) : (
           messages.map((message, index) => (
@@ -204,7 +344,11 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                   onToggle={() => setSourceOpen(!sourceOpen)}
                 />
               )}
-              {/* AI 응답에만 피드백 버튼 표시 */}
+              {/* Agent tool results display */}
+              {message.agentResults && message.agentResults.length > 0 && (
+                <AgentResult results={message.agentResults} />
+              )}
+              {/* AI 응답에만 피드백 + TTS 버튼 표시 */}
               {message.role === "assistant" && !isLoading && (
                 <div className="flex items-center gap-2 mt-1 ml-2">
                   {feedbackGiven[index] ? (
@@ -229,56 +373,58 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                       </button>
                     </>
                   )}
-                  {/* 부정 피드백 태그 선택 UI */}
-                  {showFeedbackTags === index && (
-                    <div className="ml-2 p-3 bg-red-50 dark:bg-gray-800 rounded-lg border border-red-200 dark:border-gray-600">
-                      <p className="text-xs font-medium text-red-700 dark:text-red-300 mb-2">
-                        어떤 점이 아쉬운가요?
-                      </p>
-                      <div className="flex flex-wrap gap-1 mb-2">
-                        {FEEDBACK_TAGS.map((tag) => (
-                          <button
-                            key={tag.value}
-                            onClick={() =>
-                              setSelectedTags((prev) =>
-                                prev.includes(tag.value)
-                                  ? prev.filter((t) => t !== tag.value)
-                                  : [...prev, tag.value]
-                              )
-                            }
-                            className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                              selectedTags.includes(tag.value)
-                                ? "bg-red-200 text-red-800 border-red-400 dark:bg-red-700 dark:text-red-100 dark:border-red-500"
-                                : "bg-white text-gray-600 border-gray-300 hover:bg-gray-100 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-500"
-                            }`}
-                          >
-                            {tag.label}
-                          </button>
-                        ))}
-                      </div>
-                      <textarea
-                        value={feedbackComment}
-                        onChange={(e) => setFeedbackComment(e.target.value)}
-                        placeholder="추가 의견을 남겨주세요 (선택사항)"
-                        className="w-full text-xs rounded border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white px-2 py-1 mb-2 resize-none"
-                        rows={2}
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => handleSubmitNegativeFeedback(index)}
-                          className="text-xs px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
-                        >
-                          제출
-                        </button>
-                        <button
-                          onClick={() => setShowFeedbackTags(null)}
-                          className="text-xs px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 transition-colors"
-                        >
-                          취소
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  {/* 음성 재생 버튼 */}
+                  <TTSButton text={message.content} />
+                </div>
+              )}
+              {/* 부정 피드백 태그 선택 UI */}
+              {showFeedbackTags === index && (
+                <div className="ml-2 p-3 bg-red-50 dark:bg-gray-800 rounded-lg border border-red-200 dark:border-gray-600">
+                  <p className="text-xs font-medium text-red-700 dark:text-red-300 mb-2">
+                    어떤 점이 아쉬운가요?
+                  </p>
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {FEEDBACK_TAGS.map((tag) => (
+                      <button
+                        key={tag.value}
+                        onClick={() =>
+                          setSelectedTags((prev) =>
+                            prev.includes(tag.value)
+                              ? prev.filter((t) => t !== tag.value)
+                              : [...prev, tag.value]
+                          )
+                        }
+                        className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                          selectedTags.includes(tag.value)
+                            ? "bg-red-200 text-red-800 border-red-400 dark:bg-red-700 dark:text-red-100 dark:border-red-500"
+                            : "bg-white text-gray-600 border-gray-300 hover:bg-gray-100 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-500"
+                        }`}
+                      >
+                        {tag.label}
+                      </button>
+                    ))}
+                  </div>
+                  <textarea
+                    value={feedbackComment}
+                    onChange={(e) => setFeedbackComment(e.target.value)}
+                    placeholder="추가 의견을 남겨주세요 (선택사항)"
+                    className="w-full text-xs rounded border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white px-2 py-1 mb-2 resize-none"
+                    rows={2}
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleSubmitNegativeFeedback(index)}
+                      className="text-xs px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 transition-colors"
+                    >
+                      제출
+                    </button>
+                    <button
+                      onClick={() => setShowFeedbackTags(null)}
+                      className="text-xs px-3 py-1 bg-gray-200 text-gray-700 rounded hover:bg-gray-300 dark:bg-gray-600 dark:text-gray-200 transition-colors"
+                    >
+                      취소
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -294,23 +440,69 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
           reasoningStrength={reasoningStrength}
           onStrengthChange={setReasoningStrength}
         />
-        <div className="p-4 flex gap-2">
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="질문을 입력하세요..."
-            className="flex-1 resize-none rounded-lg border border-gray-300 px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-            rows={2}
+        {/* Agent tool selector */}
+        {showAgentTools && availableTools.length > 0 && (
+          <AgentToolSelector
+            tools={availableTools}
+            selectedTools={selectedTools}
+            onToggle={handleToggleTool}
+            onCancel={handleCancelAgent}
+            onSubmit={handleAgentSubmit}
+            isLoading={isLoading}
+          />
+        )}
+        <div className="p-4 flex gap-2 items-end">
+          {/* 음성 입력 버튼 */}
+          <VoiceInput
+            onTranscript={handleVoiceTranscript}
+            onInterimTranscript={handleInterimTranscript}
             disabled={isLoading}
           />
+          <div className="flex-1 relative">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder={
+                interimTranscript
+                  ? `🎤 ${interimTranscript}`
+                  : "질문을 입력하세요... (@agent 로 에이전트 모드)"
+              }
+              className={`w-full resize-none rounded-lg border px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-white ${
+                interimTranscript
+                  ? "border-red-300 dark:border-red-600 ring-2 ring-red-200 dark:ring-red-800"
+                  : input.trim().startsWith(AGENT_TRIGGER)
+                  ? "border-blue-400 dark:border-blue-500 ring-2 ring-blue-200 dark:ring-blue-800"
+                  : "border-gray-300 dark:border-gray-600"
+              }`}
+              rows={2}
+              disabled={isLoading}
+            />
+            {/* 음성 인식 중 표시 */}
+            {interimTranscript && (
+              <div className="absolute -top-6 left-0 text-xs text-red-500 dark:text-red-400 flex items-center gap-1">
+                <span className="inline-block w-2 h-2 bg-red-500 rounded-full animate-pulse" />
+                녹음 중...
+              </div>
+            )}
+            {/* 에이전트 모드 표시 */}
+            {input.trim().startsWith(AGENT_TRIGGER) && !interimTranscript && (
+              <div className="absolute -top-6 left-0 text-xs text-blue-500 dark:text-blue-400 flex items-center gap-1">
+                <span>🤖</span> 에이전트 모드
+              </div>
+            )}
+          </div>
           <div className="flex flex-col gap-2">
             <button
               onClick={handleSend}
               disabled={!input.trim() || isLoading}
-              className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+              className={`px-6 py-3 text-white rounded-lg transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed ${
+                input.trim().startsWith(AGENT_TRIGGER)
+                  ? "bg-indigo-600 hover:bg-indigo-700"
+                  : "bg-blue-600 hover:bg-blue-700"
+              }`}
             >
-              {isLoading ? "전송 중..." : "전송"}
+              {isLoading ? "전송 중..." : input.trim().startsWith(AGENT_TRIGGER) ? "🤖 실행" : "전송"}
             </button>
             {messages.some((m) => m.role === "user") && (
               <button

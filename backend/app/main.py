@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """애플리케이션 수명 주기 관리"""
-    # Qdrant 연결 대기 (Docker compose 환경 대응)
     from app.core.qdrant import get_qdrant
 
     max_retries = 30
@@ -40,21 +39,30 @@ async def lifespan(app: FastAPI):
             max_retries,
         )
 
+    # 에이전트 도구 등록
+    from app.core.agent_tools import WebSearchTool, SummarizeDocumentTool, GenerateChartTool, SaveFileTool
+    from app.core.agent_tools.registry import get_tool_registry
+    _registry = get_tool_registry()
+    _registry.register(WebSearchTool())
+    _registry.register(SummarizeDocumentTool())
+    _registry.register(GenerateChartTool())
+    _registry.register(SaveFileTool())
+    logger.info("에이전트 도구 %d개 등록 완료", len(_registry.get_tool_names()))
+
     yield
 
-    # 종료 시 정리
     logger.info("mAI-Brain 서비스 종료")
 
 
 app = FastAPI(
     title=settings.app_name,
-    description="mAI-Brain 도메인 특화 RAG 챗봇 API",
-    version="0.1.0",
+    description="mAI-Brain — 지식 기반 검색 증강 답변 플랫폼",
+    version="0.2.0",
     debug=settings.debug,
     lifespan=lifespan,
 )
 
-# CORS 미들웨어 - Next.js 프론트엔드에서의 요청 허용
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -67,16 +75,14 @@ app.add_middleware(
 # ── 헬스체크 ──────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
-    """서비스 헬스체크"""
     return {"status": "ok", "app": settings.app_name}
 
 
 @app.get("/")
 async def root():
-    """루트 엔드포인트 - API 개요"""
     return {
         "app": settings.app_name,
-        "version": "0.1.0",
+        "version": "0.2.0",
         "docs": "/docs",
         "health": "/health",
     }
@@ -86,13 +92,23 @@ async def root():
 from app.api import documents
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 
-from app.api import chat, evaluation, sessions, cross_reasoning, chunking, feedback, workspace
-from app.api import chat, evaluation, sessions, cross_reasoning, chunking, feedback, workspace
+from app.api import (
+    chat,
+    chunking,
+    cross_reasoning,
+    evaluation,
+    feedback,
+    sessions,
+    settings,
+    voice,
+    workspace,
+)
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
-app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluation"])
-app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
-app.include_router(cross_reasoning.router, prefix="/api/cross-reasoning", tags=["cross-reasoning"])
 app.include_router(chunking.router, prefix="/api/chunking", tags=["chunking"])
+app.include_router(cross_reasoning.router, prefix="/api/cross-reasoning", tags=["cross-reasoning"])
+app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluation"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["feedback"])
-app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])
+app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
+app.include_router(settings.router, prefix="/api/settings", tags=["settings"])
+app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])

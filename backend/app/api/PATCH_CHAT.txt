@@ -1,0 +1,59 @@
+#!/usr/bin/env python3
+"""Patch chat.py to add workspace_id-based search scoping."""
+import re
+
+path = "/Users/hyun/Dev/nalutbae/mai-brain/backend/app/api/chat.py"
+with open(path, "r") as f:
+    content = f.read()
+
+old = '        search_result = hybrid_search(\n            query=request.question,\n            mode=request.mode,\n            session_id=session_id,\n        )'
+
+new = '''    # 1.5 워크스페이스 컬렉션 결정
+    collection_name = None
+    if request.workspace_id:
+        from app.core.workspace import get_workspace_store
+        ws_store = get_workspace_store()
+        collection_name = ws_store.get_collection_name(request.workspace_id)
+        logger.info("워크스페이스 검색: workspace_id=%s, collection=%s",
+                     request.workspace_id, collection_name)
+
+    # 2. 하이브리드 검색'''
+
+# Add collection_name to the search call
+old2 = '            session_id=session_id,\n        )'
+new2 = '            session_id=session_id,\n            collection_name=collection_name,\n        )'
+
+if "collection_name=collection_name" in content:
+    print("ALREADY PATCHED")
+elif "collection_name" in content:
+    print("Has collection_name but different pattern")
+else:
+    # Find the session_id line and add collection_name before
+    start = content.find('            session_id=session_id,')
+    if start >= 0:
+        line_end = content.index('\n        )', start)
+        # Insert collection_name line
+        content = (content[:line_end] + 
+                   '\n            collection_name=collection_name,' +
+                   content[line_end:])
+        
+        # Add collection resolution block before search
+        search_start = content.find('    # 2. 하이브리드 검색')
+        if search_start >= 0:
+            ws_block = '''    # 1.5 워크스페이스 컬렉션 결정
+    collection_name = None
+    if request.workspace_id:
+        from app.core.workspace import get_workspace_store
+        ws_store = get_workspace_store()
+        collection_name = ws_store.get_collection_name(request.workspace_id)
+        logger.info("워크스페이스 검색: workspace_id=%s, collection=%s",
+                     request.workspace_id, collection_name)
+
+'''
+            content = content[:search_start] + ws_block + content[search_start:]
+        
+        with open(path, "w") as f:
+            f.write(content)
+        print("PATCHED SUCCESSFULLY")
+    else:
+        print("Could not find session_id line")
