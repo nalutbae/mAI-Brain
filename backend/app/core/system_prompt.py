@@ -99,20 +99,20 @@ class SystemPromptStore:
 
     def _create_defaults(self):
         """기본 모드별 프롬프트 생성 (llm.py의 하드코딩과 동일)"""
-        from app.core.llm import SYSTEM_PROMPT, MODE_INSTRUCTIONS
+        from app.core.llm import DEFAULT_SYSTEM_PROMPT, DEFAULT_MODE_INSTRUCTIONS
 
         # 글로벌 기본 시스템 프롬프트
         default_system = SystemPrompt(
             id="default-system",
             workspace_id=None,
             mode=ChatMode.FACT,  # 기본값 (글로벌은 모드 무관하나 스키마 호환)
-            prompt_text=SYSTEM_PROMPT,
+            prompt_text=DEFAULT_SYSTEM_PROMPT,
             is_default=True,
         )
         self._prompts[default_system.id] = default_system
 
         # 모드별 기본 프롬프트
-        for mode, instruction in MODE_INSTRUCTIONS.items():
+        for mode, instruction in DEFAULT_MODE_INSTRUCTIONS.items():
             prompt_id = f"default-{mode.value}"
             prompt = SystemPrompt(
                 id=prompt_id,

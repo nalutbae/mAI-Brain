@@ -304,9 +304,86 @@ class LLMClient:
 
         if ptype == LLMProviderType.ANTHROPIC:
             return self._call_anthropic(provider, messages, max_tokens)
+        elif ptype == LLMProviderType.OLLAMA:
+            base_url = provider.get_effective_base_url().rstrip("/")
+            # base_url이 /api/chat으로 끝나면 Ollama 네이티브 API 사용
+            if base_url.endswith("/api/chat"):
+                return self._call_ollama_native(provider, messages, max_tokens)
+            else:
+                return self._call_openai_compatible(provider, messages, max_tokens)
         else:
-            # OpenAI 호환: ollama, openai, groq, deepseek, custom
+            # OpenAI 호환: openai, groq, deepseek, custom
             return self._call_openai_compatible(provider, messages, max_tokens)
+
+    # ------------------------------------------------------------------- #
+    # Ollama 네이티브 API (/api/chat 엔드포인트)
+    # ------------------------------------------------------------------- #
+
+    def _call_ollama_native(
+        self,
+        provider: LLMProviderConfig,
+        messages: list[dict[str, str]],
+        max_tokens: int = 2048,
+    ) -> Optional[str]:
+        """Ollama 네이티브 /api/chat 엔드포인트 호출.
+
+        ollama.com 클라우드 등 Ollama 네이티브 프로토콜을 사용하는 서비스용.
+        인증: Authorization: Bearer {api_key}  (OLLAMA_API_KEY)
+        요청: POST {base_url}  (base_url이 이미 /api/chat 전체 경로)
+        응답: {"message": {"role": "assistant", "content": "..."}}
+        """
+        import os
+
+        base_url = provider.get_effective_base_url().rstrip("/")
+        model = provider.get_effective_model()
+
+        # API 키: JSON 설정 → OLLAMA_API_KEY 환경변수 → 더미값
+        api_key = provider.api_key
+        if not api_key:
+            api_key = os.environ.get("OLLAMA_API_KEY", "")
+        if not api_key:
+            api_key = "ollama"  # 로컬 Ollama는 더미값
+
+        temperature = getattr(provider, 'temperature', 0.1)
+
+        headers = {"Content-Type": "application/json"}
+        if api_key and api_key != "ollama":
+            headers["Authorization"] = f"Bearer {api_key}"
+
+        try:
+            response = httpx.post(
+                base_url,  # 이미 /api/chat 전체 URL
+                headers=headers,
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "stream": False,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens,
+                    },
+                },
+                timeout=self._timeout,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            # Ollama 네이티브 응답: {"message": {"role": "assistant", "content": "..."}}
+            answer = data.get("message", {}).get("content", "")
+            if not answer:
+                # /api/generate 형식 응답 폴백
+                answer = data.get("response", "")
+            return answer if answer else None
+
+        except httpx.HTTPStatusError as exc:
+            logger.warning(
+                "Ollama 네이티브 API 오류: %d %s (url=%s)",
+                exc.response.status_code, exc.response.text[:200], base_url,
+            )
+            return None
+        except Exception as exc:
+            logger.warning("Ollama 네이티브 연결 오류: %s", exc)
+            return None
 
     # ------------------------------------------------------------------- #
     # OpenAI 호환 API (ollama, openai, groq, deepseek, custom)
@@ -319,12 +396,41 @@ class LLMClient:
         max_tokens: int = 2048,
     ) -> Optional[str]:
         """OpenAI Chat Completions 호환 API 공통 호출."""
+        import os
+
         base_url = provider.get_effective_base_url()
         model = provider.get_effective_model()
-        api_key = provider.api_key or "ollama"  # ollama는 더미값
 
-        url = f"{base_url.rstrip('/')}/v1/chat/completions"
+        # API 키: JSON 설정 → 환경변수 → 프로바이더별 기본값 순서로 해석
+        api_key = provider.api_key
+        if not api_key:
+            # 프로바이더별 환경변수에서 폴백
+            env_var_map = {
+                LLMProviderType.OPENAI: "OPENAI_API_KEY",
+                LLMProviderType.ANTHROPIC: "ANTHROPIC_API_KEY",
+                LLMProviderType.GROQ: "GROQ_API_KEY",
+                LLMProviderType.DEEPSEEK: "DEEPSEEK_API_KEY",
+            }
+            env_var = env_var_map.get(provider.provider, "")
+            if env_var:
+                api_key = os.environ.get(env_var, "")
+        if not api_key and provider.provider == LLMProviderType.OLLAMA:
+            api_key = "ollama"  # Ollama는 더미값
+
+        # 호출 URL 구성 — base_url에 이미 /v1이 포함된 경우 중복 방지
+        burl = base_url.rstrip("/")
+        if burl.endswith("/v1"):
+            url = f"{burl}/chat/completions"
+        else:
+            url = f"{burl}/v1/chat/completions"
+
         temperature = getattr(provider, 'temperature', 0.1)
+
+        if not api_key:
+            logger.warning(
+                "API 키 없음 — 프로바이더 %s 호출 스킵", provider.provider.value,
+            )
+            return None
 
         try:
             response = httpx.post(

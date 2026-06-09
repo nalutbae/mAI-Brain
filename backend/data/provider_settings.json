@@ -5,7 +5,7 @@
       "provider": "ollama",
       "name": "Ollama Cloud",
       "api_key": "",
-      "base_url": "http://localhost:11434",
+      "base_url": "https://ollama.com/api/chat",
       "model": "glm-5.1",
       "is_active": true,
       "temperature": 0.1,

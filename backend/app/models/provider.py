@@ -54,7 +54,7 @@ class ProviderDefaults(BaseModel):
 
 LLM_PROVIDER_DEFAULTS: dict[str, ProviderDefaults] = {
     "ollama": ProviderDefaults(
-        base_url="http://localhost:11434",
+        base_url="https://ollama.com/api/chat",
         default_model="glm-5.1",
         supports_streaming=True,
         supports_tools=False,
@@ -194,7 +194,7 @@ class AppSettings(BaseModel):
     deepseek_api_key: str = Field(default="")
     deepseek_base_url: str = Field(default="https://api.deepseek.com/v1")
     deepseek_model: str = Field(default="deepseek-chat")
-    ollama_base_url: str = Field(default="http://localhost:11434")
+    ollama_base_url: str = Field(default="https://ollama.com/api/chat")
     ollama_model: str = Field(default="glm-5.1")
 
 
