@@ -66,6 +66,8 @@ export default function SettingsPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [availableLLM, setAvailableLLM] = useState<ProviderDefaults[]>([]);
   const [llmLoading, setLlmLoading] = useState(true);
+  const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
+  const [editApiKey, setEditApiKey] = useState("");
 
   // ── Embedding ────────────────────────────────────────────────────────
   const [embedding, setEmbedding] = useState<EmbeddingConfig | null>(null);
@@ -480,6 +482,13 @@ export default function SettingsPage() {
                       </button>
                     )}
                     <button
+                      onClick={() => setEditingKeyId(editingKeyId === p.id ? null : p.id)}
+                      className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700 min-h-[44px]"
+                      title="API 키 편집"
+                    >
+                      🔑
+                    </button>
+                    <button
                       onClick={() => handleDelete(p.id)}
                       className="px-3 py-1.5 text-sm text-red-600 border border-red-200 dark:border-red-700 rounded hover:bg-red-50 dark:hover:bg-red-900/20 min-h-[44px]"
                     >
@@ -487,6 +496,40 @@ export default function SettingsPage() {
                     </button>
                   </div>
                 </div>
+                {/* API 키 인라인 편집 */}
+                {editingKeyId === p.id && (
+                  <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
+                    <label className="block text-sm font-medium mb-1.5">API 키</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="password"
+                        value={editApiKey}
+                        onChange={(e) => setEditApiKey(e.target.value)}
+                        placeholder={p.api_key ? "•••••••• (기존 키 있음)" : "API 키를 입력하세요 (빈값 → 환경변수 자동 로드)"}
+                        className="flex-1 px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
+                      />
+                      <button
+                        onClick={async () => {
+                          await updateLLMProvider(p.id, { api_key: editApiKey || undefined });
+                          setEditingKeyId(null);
+                          setEditApiKey("");
+                          // 설정 다시 로드
+                          const [llmRes] = await Promise.all([listLLMProviders()]);
+                          setProviders(llmRes.providers);
+                        }}
+                        className="px-4 py-2.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 min-h-[44px] shrink-0"
+                      >
+                        저장
+                      </button>
+                      <button
+                        onClick={() => { setEditingKeyId(null); setEditApiKey(""); }}
+                        className="px-3 py-2.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 min-h-[44px] shrink-0"
+                      >
+                        취소
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
             {providers.length === 0 && (
