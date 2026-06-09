@@ -39,6 +39,14 @@ const PROVIDER_LABELS: Record<string, string> = {
   custom: "Custom (OpenAI 호환)",
 };
 
+const EMBEDDING_ICONS: Record<string, string> = {
+  local: "🏠",
+  openai: "🧠",
+  jina: "🔮",
+  ollama: "🦙",
+  cohere: "🎯",
+};
+
 const EMBEDDING_LABELS: Record<string, string> = {
   local: "bge-m3 (로컬)",
   openai: "OpenAI",
@@ -46,6 +54,11 @@ const EMBEDDING_LABELS: Record<string, string> = {
   ollama: "Ollama",
   cohere: "Cohere",
 };
+
+// 임베딩 프로바이더 변경 시 경고 메시지
+const EMBEDDING_CHANGE_WARNING =
+  "⚠️ 임베딩 모델을 변경하면 기존에 인덱싱된 문서와 호환되지 않습니다. " +
+  "새 모델로 모든 문서를 다시 인덱싱해야 합니다.";
 
 export default function SettingsPage() {
   // ── LLM providers ────────────────────────────────────────────────────
@@ -85,6 +98,9 @@ export default function SettingsPage() {
   const [embSaving, setEmbSaving] = useState(false);
   const [embMessage, setEmbMessage] = useState("");
 
+  // 원래 임베딩 프로바이더 (변경 감지용)
+  const [originalEmbProvider, setOriginalEmbProvider] = useState<string>("local");
+
   // ── Load data ────────────────────────────────────────────────────────
   useEffect(() => {
     loadData();
@@ -109,6 +125,7 @@ export default function SettingsPage() {
       setEmbBaseUrl(embRes.base_url);
       setEmbModel(embRes.model);
       setEmbDim(embRes.dim);
+      setOriginalEmbProvider(embRes.provider);
       setAvailableEmb(availEmbRes.providers);
     } catch (e) {
       console.error("설정 로드 실패:", e);
@@ -199,9 +216,10 @@ export default function SettingsPage() {
         dim: embDim || 0,
       });
       setEmbedding(updated);
+      setOriginalEmbProvider(embProvider);
       setEmbApiKey("");
-      setEmbMessage("✅ 임베딩 설정 저장 완료");
-      setTimeout(() => setEmbMessage(""), 3000);
+      setEmbMessage("✅ 임베딩 설정 저장 완료 — 프로바이더가 전환되었습니다.");
+      setTimeout(() => setEmbMessage(""), 5000);
     } catch (e: any) {
       setEmbMessage("❌ 저장 실패: " + e.message);
     } finally {
@@ -230,19 +248,192 @@ export default function SettingsPage() {
     }
   }
 
+  // 프로바이더 변경 여부
+  const embProviderChanged = embProvider !== originalEmbProvider;
+
+  // 현재 선택된 임베딩 프로바이더의 정보
+  const selectedEmbDefaults = availableEmb.find((p) => p.provider === embProvider);
+  const requiresApiKey = selectedEmbDefaults?.requires_api_key ?? false;
+
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-8">
+    <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-8">
       <h1 className="text-2xl font-bold">⚙️ 설정</h1>
+
+      {/* ── 임베딩 프로바이더 (상단으로 이동 — 가장 중요) ────────────── */}
+      <section>
+        <h2 className="text-lg sm:text-xl font-semibold mb-4">🧬 임베딩 프로바이더</h2>
+        {embLoading ? (
+          <p className="text-gray-500">로딩 중...</p>
+        ) : (
+          <div className="space-y-4">
+            {/* 현재 선택된 프로바이더 표시 */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-gray-600">현재:</span>
+              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
+                <span>{EMBEDDING_ICONS[embedding?.provider || "local"] || "📌"}</span>
+                {EMBEDDING_LABELS[embedding?.provider || "local"] || embedding?.provider}
+              </span>
+              {embedding?.model && (
+                <span className="text-sm text-gray-500">({embedding.model})</span>
+              )}
+              {(embedding?.dim ?? 0) > 0 && (
+                <span className="text-xs text-gray-400">{embedding!.dim}차원</span>
+              )}
+            </div>
+
+            {/* 프로바이더 선택 */}
+            <div className="p-4 sm:p-5 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-1.5">임베딩 모델 선택</label>
+                <select
+                  value={embProvider}
+                  onChange={(e) => handleEmbProviderChange(e.target.value as EmbeddingProvider)}
+                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
+                >
+                  {availableEmb.map((p) => (
+                    <option key={p.provider} value={p.provider}>
+                      {EMBEDDING_ICONS[p.provider] || "📌"} {EMBEDDING_LABELS[p.provider] || p.provider} — {p.description}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* 선택된 프로바이더 정보 */}
+              {selectedEmbDefaults && (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  {selectedEmbDefaults.default_dim > 0 && (
+                    <span className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
+                      {selectedEmbDefaults.default_dim}차원
+                    </span>
+                  )}
+                  <span className={`px-2 py-1 rounded ${
+                    requiresApiKey
+                      ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+                      : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                  }`}>
+                    {requiresApiKey ? "🔑 API 키 필요" : "✅ API 키 불필요"}
+                  </span>
+                  {embProvider === "local" && (
+                    <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded">
+                      dense + sparse
+                    </span>
+                  )}
+                  {embProvider !== "local" && (
+                    <span className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
+                      dense only (sparse → BM25)
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* 프로바이더 변경 경고 */}
+              {embProviderChanged && (
+                <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
+                  <p className="text-sm text-amber-800 dark:text-amber-200">{EMBEDDING_CHANGE_WARNING}</p>
+                </div>
+              )}
+
+              {/* API 키 + 설정 (local이 아닌 경우) */}
+              {embProvider !== "local" && (
+                <div className="space-y-3">
+                  {requiresApiKey && (
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5">
+                        API 키 <span className="text-red-500">*</span>
+                      </label>
+                      <input
+                        type="password"
+                        value={embApiKey}
+                        onChange={(e) => setEmbApiKey(e.target.value)}
+                        placeholder={
+                          embProvider === "openai" ? "sk-..." :
+                          embProvider === "jina" ? "jina_..." :
+                          "API 키를 입력하세요"
+                        }
+                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
+                      />
+                      <p className="text-xs text-gray-400 mt-1">
+                        빈값 → 서버 환경변수에서 자동 로드
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5">Base URL</label>
+                      <input
+                        type="text"
+                        value={embBaseUrl}
+                        onChange={(e) => setEmbBaseUrl(e.target.value)}
+                        placeholder="프로바이더 기본 URL 사용 시 빈칸"
+                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5">모델명</label>
+                      <input
+                        type="text"
+                        value={embModel}
+                        onChange={(e) => setEmbModel(e.target.value)}
+                        placeholder="프로바이더 기본 모델 사용 시 빈칸"
+                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
+                      />
+                    </div>
+                  </div>
+
+                  {embDim > 0 && (
+                    <div>
+                      <label className="block text-sm font-medium mb-1.5">임베딩 차원</label>
+                      <input
+                        type="number"
+                        value={embDim}
+                        onChange={(e) => setEmbDim(Number(e.target.value))}
+                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 로컬 bge-m3 설명 */}
+              {embProvider === "local" && (
+                <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
+                  <p className="text-sm text-blue-800 dark:text-blue-200">
+                    🏠 <strong>bge-m3</strong> — 로컬에서 실행되는 다국어 임베딩 모델입니다.
+                    dense(1024차원) + sparse 벡터를 모두 생성하여 하이브리드 검색(RRF)을 지원합니다.
+                    별도 API 키가 필요하지 않습니다.
+                  </p>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  onClick={handleSaveEmbedding}
+                  disabled={embSaving || (requiresApiKey && !embApiKey && !embedding?.api_key?.includes("*"))}
+                  className="px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50 min-h-[44px]"
+                >
+                  {embSaving ? "저장 중..." : "💾 임베딩 설정 저장"}
+                </button>
+                {embMessage && (
+                  <span className={`text-sm ${embMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
+                    {embMessage}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
 
       {/* ── LLM 프로바이더 ──────────────────────────────────────────────── */}
       <section>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold">🔗 LLM 프로바이더</h2>
+          <h2 className="text-lg sm:text-xl font-semibold">🔗 LLM 프로바이더</h2>
           <button
             onClick={() => setShowAddForm(!showAddForm)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm"
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm min-h-[44px]"
           >
-            {showAddForm ? "취소" : "+ 프로바이더 추가"}
+            {showAddForm ? "취소" : "+ 추가"}
           </button>
         </div>
 
@@ -254,19 +445,19 @@ export default function SettingsPage() {
             {providers.map((p) => (
               <div
                 key={p.id}
-                className={`p-4 rounded-lg border ${
+                className={`p-3 sm:p-4 rounded-lg border ${
                   p.is_active
-                    ? "border-blue-500 bg-blue-50"
-                    : "border-gray-200 bg-white"
+                    ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600"
+                    : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
                 }`}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-3">
                     <span className="text-xl">
                       {PROVIDER_ICONS[p.provider] || "🔌"}
                     </span>
-                    <div>
-                      <div className="font-medium">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">
                         {p.name || p.display_name}
                         {p.is_active && (
                           <span className="ml-2 text-xs bg-blue-600 text-white px-2 py-0.5 rounded-full">
@@ -274,23 +465,23 @@ export default function SettingsPage() {
                           </span>
                         )}
                       </div>
-                      <div className="text-sm text-gray-500">
+                      <div className="text-sm text-gray-500 dark:text-gray-400 truncate">
                         {p.effective_model} · {p.effective_base_url}
                       </div>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     {!p.is_active && (
                       <button
                         onClick={() => handleActivate(p.id)}
-                        className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-100"
+                        className="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-100 dark:hover:bg-gray-700 min-h-[44px]"
                       >
                         활성화
                       </button>
                     )}
                     <button
                       onClick={() => handleDelete(p.id)}
-                      className="px-3 py-1 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50"
+                      className="px-3 py-1.5 text-sm text-red-600 border border-red-200 dark:border-red-700 rounded hover:bg-red-50 dark:hover:bg-red-900/20 min-h-[44px]"
                     >
                       삭제
                     </button>
@@ -308,15 +499,15 @@ export default function SettingsPage() {
 
         {/* Add form */}
         {showAddForm && (
-          <div className="mt-4 p-4 border border-gray-300 rounded-lg bg-gray-50 space-y-3">
+          <div className="mt-4 p-4 border border-gray-300 dark:border-gray-600 rounded-lg bg-gray-50 dark:bg-gray-800 space-y-3">
             <h3 className="font-semibold">새 프로바이더 추가</h3>
 
             <div>
-              <label className="block text-sm font-medium mb-1">프로바이더</label>
+              <label className="block text-sm font-medium mb-1.5">프로바이더</label>
               <select
                 value={newProvider}
                 onChange={(e) => setNewProvider(e.target.value as LLMProvider)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
               >
                 {availableLLM.map((p) => (
                   <option key={p.provider} value={p.provider}>
@@ -326,48 +517,48 @@ export default function SettingsPage() {
               </select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium mb-1">이름 (선택)</label>
+                <label className="block text-sm font-medium mb-1.5">이름 (선택)</label>
                 <input
                   type="text"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="예: Ollama Cloud"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">API 키</label>
+                <label className="block text-sm font-medium mb-1.5">API 키</label>
                 <input
                   type="password"
                   value={newApiKey}
                   onChange={(e) => setNewApiKey(e.target.value)}
                   placeholder="필요한 경우에만 입력"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
                 />
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium mb-1">Base URL (선택)</label>
+                <label className="block text-sm font-medium mb-1.5">Base URL (선택)</label>
                 <input
                   type="text"
                   value={newBaseUrl}
                   onChange={(e) => setNewBaseUrl(e.target.value)}
                   placeholder="빈값 → 기본 URL 사용"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">모델 (선택)</label>
+                <label className="block text-sm font-medium mb-1.5">모델 (선택)</label>
                 <input
                   type="text"
                   value={newModel}
                   onChange={(e) => setNewModel(e.target.value)}
                   placeholder="빈값 → 기본 모델 사용"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
                 />
               </div>
             </div>
@@ -375,7 +566,7 @@ export default function SettingsPage() {
             <button
               onClick={handleAddProvider}
               disabled={saving}
-              className="w-full py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
+              className="w-full py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50 min-h-[44px]"
             >
               {saving ? "저장 중..." : "추가"}
             </button>
@@ -385,15 +576,15 @@ export default function SettingsPage() {
 
       {/* ── 연결 테스트 ──────────────────────────────────────────────────── */}
       <section>
-        <h2 className="text-xl font-semibold mb-4">🔍 연결 테스트</h2>
-        <div className="p-4 border border-gray-200 rounded-lg space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+        <h2 className="text-lg sm:text-xl font-semibold mb-4">🔍 연결 테스트</h2>
+        <div className="p-4 sm:p-5 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 space-y-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium mb-1">프로바이더</label>
+              <label className="block text-sm font-medium mb-1.5">프로바이더</label>
               <select
                 value={testProvider}
                 onChange={(e) => handleTestProviderChange(e.target.value as LLMProvider)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
               >
                 {availableLLM.map((p) => (
                   <option key={p.provider} value={p.provider}>
@@ -403,33 +594,33 @@ export default function SettingsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">API 키 (선택)</label>
+              <label className="block text-sm font-medium mb-1.5">API 키 (선택)</label>
               <input
                 type="password"
                 value={testApiKey}
                 onChange={(e) => setTestApiKey(e.target.value)}
                 placeholder="환경변수에 설정된 경우 생략"
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-sm font-medium mb-1">Base URL</label>
+              <label className="block text-sm font-medium mb-1.5">Base URL</label>
               <input
                 type="text"
                 value={testBaseUrl}
                 onChange={(e) => setTestBaseUrl(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1">모델</label>
+              <label className="block text-sm font-medium mb-1.5">모델</label>
               <input
                 type="text"
                 value={testModel}
                 onChange={(e) => setTestModel(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
               />
             </div>
           </div>
@@ -437,7 +628,7 @@ export default function SettingsPage() {
           <button
             onClick={handleTestConnection}
             disabled={testing}
-            className="w-full py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm disabled:opacity-50"
+            className="w-full py-2.5 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm disabled:opacity-50 min-h-[44px]"
           >
             {testing ? "테스트 중..." : "연결 테스트"}
           </button>
@@ -446,8 +637,8 @@ export default function SettingsPage() {
             <div
               className={`p-3 rounded-lg text-sm ${
                 testResult.success
-                  ? "bg-green-50 border border-green-200 text-green-800"
-                  : "bg-red-50 border border-red-200 text-red-800"
+                  ? "bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-200"
+                  : "bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-700 text-red-800 dark:text-red-200"
               }`}
             >
               <p className="font-medium">{testResult.success ? "✅ 성공" : "❌ 실패"}</p>
@@ -461,91 +652,6 @@ export default function SettingsPage() {
             </div>
           )}
         </div>
-      </section>
-
-      {/* ── 임베딩 프로바이더 ──────────────────────────────────────────── */}
-      <section>
-        <h2 className="text-xl font-semibold mb-4">🧬 임베딩 프로바이더</h2>
-        {embLoading ? (
-          <p className="text-gray-500">로딩 중...</p>
-        ) : (
-          <div className="p-4 border border-gray-200 rounded-lg space-y-3">
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-gray-600">현재:</span>
-              <span className="px-3 py-1 bg-gray-100 rounded-full text-sm font-medium">
-                {EMBEDDING_LABELS[embedding?.provider || "local"] || embedding?.provider}
-              </span>
-              {embedding?.model && (
-                <span className="text-sm text-gray-500">({embedding.model})</span>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1">프로바이더</label>
-              <select
-                value={embProvider}
-                onChange={(e) => handleEmbProviderChange(e.target.value as EmbeddingProvider)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-              >
-                {availableEmb.map((p) => (
-                  <option key={p.provider} value={p.provider}>
-                    {EMBEDDING_LABELS[p.provider] || p.provider} — {p.description}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            {embProvider !== "local" && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium mb-1">API 키</label>
-                  <input
-                    type="password"
-                    value={embApiKey}
-                    onChange={(e) => setEmbApiKey(e.target.value)}
-                    placeholder="빈값 → 환경변수에서 자동 로드"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium mb-1">Base URL (선택)</label>
-                    <input
-                      type="text"
-                      value={embBaseUrl}
-                      onChange={(e) => setEmbBaseUrl(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1">모델</label>
-                    <input
-                      type="text"
-                      value={embModel}
-                      onChange={(e) => setEmbModel(e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleSaveEmbedding}
-                disabled={embSaving}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50"
-              >
-                {embSaving ? "저장 중..." : "임베딩 저장"}
-              </button>
-              {embMessage && (
-                <span className={`text-sm ${embMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
-                  {embMessage}
-                </span>
-              )}
-            </div>
-          </div>
-        )}
       </section>
     </div>
   );

@@ -16,6 +16,7 @@ export default function NavBar() {
     { href: "/admin/chunking", label: "⚙️ 청킹 프로파일", active: pathname === "/admin/chunking" },
     { href: "/evaluation", label: "📊 평가", active: pathname === "/evaluation" },
     { href: "/feedback", label: "🔄 피드백", active: pathname === "/feedback" },
+    { href: "/settings", label: "⚙️ 설정", active: pathname === "/settings" },
   ];
 
   return (
