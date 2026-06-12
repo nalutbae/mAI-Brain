@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { AdminGuard } from "../../../components/AuthGuard";
 import {
   ChunkingProfile,
   ChunkingStrategy,
@@ -209,6 +210,14 @@ function PreviewModal({
 // ── 메인 페이지 ────────────────────────────────────────────────────────
 
 export default function ChunkingPage() {
+  return (
+    <AdminGuard>
+      <ChunkingContent />
+    </AdminGuard>
+  );
+}
+
+function ChunkingContent() {
   const [profiles, setProfiles] = useState<ChunkingProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

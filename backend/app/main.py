@@ -143,8 +143,14 @@ app.include_router(widget.router, prefix="/api/widget", tags=["widget"])
 app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])
 
 # ── API 키 관리 (관리자용) ──────────────────────────────────────────────────
-from app.api import api_keys
+from app.api import api_keys, auth, admin_users
 app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
+
+# ── 인증 ──────────────────────────────────────────────────────────────────────
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+
+# ── 관리자: 사용자 관리 ──────────────────────────────────────────────────────
+app.include_router(admin_users.router, prefix="/api/admin/users", tags=["admin-users"])
 
 # ── 외부용 OpenAPI v1 (X-API-Key 인증 필요) ────────────────────────────────
 from app.api import v1

@@ -11,6 +11,7 @@ export async function fetchAPI<T>(
   options?: RequestInit
 ): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
       ...options?.headers,
@@ -1079,5 +1080,53 @@ export async function v1ListModes(
   }
 
   return res.json();
+}
+
+
+// ── 관리자: 사용자 관리 ──────────────────────────────────────────────────────
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  display_name: string | null;
+  role: "admin" | "user";
+  is_active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+export async function listUsers(): Promise<AdminUser[]> {
+  return fetchAPI<AdminUser[]>("/api/admin/users");
+}
+
+export async function getUser(userId: string): Promise<AdminUser> {
+  return fetchAPI<AdminUser>(`/api/admin/users/${userId}`);
+}
+
+export async function updateUserRole(userId: string, role: "admin" | "user"): Promise<AdminUser> {
+  return fetchAPI<AdminUser>(`/api/admin/users/${userId}/role`, {
+    method: "PUT",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function setUserActive(userId: string, isActive: boolean): Promise<AdminUser> {
+  return fetchAPI<AdminUser>(`/api/admin/users/${userId}/active`, {
+    method: "PUT",
+    body: JSON.stringify({ is_active: isActive }),
+  });
+}
+
+export async function deleteUser(userId: string): Promise<{ ok: boolean; message: string }> {
+  return fetchAPI(`/api/admin/users/${userId}`, { method: "DELETE" });
+}
+
+export async function getUserStats(): Promise<{
+  total: number;
+  active: number;
+  admins: number;
+  regular_users: number;
+}> {
+  return fetchAPI("/api/admin/users/stats/summary");
 }
 

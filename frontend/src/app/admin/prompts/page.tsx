@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { AdminGuard } from "../../../components/AuthGuard";
 import {
   SystemPrompt,
   SystemPromptCreate,
@@ -121,6 +122,14 @@ function PreviewPanel({
 // ── 메인 페이지 ────────────────────────────────────────────────────────
 
 export default function PromptsPage() {
+  return (
+    <AdminGuard>
+      <PromptsContent />
+    </AdminGuard>
+  );
+}
+
+function PromptsContent() {
   const [activeMode, setActiveMode] = useState<PromptMode>("fact");
   const [prompts, setPrompts] = useState<SystemPrompt[]>([]);
   const [defaults, setDefaults] = useState<SystemPrompt[]>([]);

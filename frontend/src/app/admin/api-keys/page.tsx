@@ -10,10 +10,19 @@ import {
   deactivateApiKey,
   deleteApiKey,
 } from "../../../lib/api";
+import { AdminGuard } from "../../../components/AuthGuard";
 
 // ── API 키 관리 페이지 ──────────────────────────────────────────────────────
 
 export default function ApiKeysPage() {
+  return (
+    <AdminGuard>
+      <ApiKeysContent />
+    </AdminGuard>
+  );
+}
+
+function ApiKeysContent() {
   const [keys, setKeys] = useState<ApiKeyResponse[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

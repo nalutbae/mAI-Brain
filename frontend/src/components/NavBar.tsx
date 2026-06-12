@@ -2,38 +2,78 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "../lib/auth";
 import ThemeToggle from "./ThemeToggle";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// 관리자 전용 경로
+const ADMIN_PATHS = ["/admin", "/admin/api-keys", "/admin/chunking", "/admin/prompts", "/admin/users"];
+
+// 로그인 필요 경로 (모든 페이지)
+// 로그인 없이 접근 가능: /login, /api/v1 (외부 API)
 
 export default function NavBar() {
   const pathname = usePathname();
+  const { user, loading, isAdmin, logout } = useAuth();
 
-  const links: Array<
-    { href: string; label: string; active: boolean } &
-      { external?: boolean }
-  > = [
-    { href: "/", label: "💬 채팅", active: pathname === "/" },
-    { href: "/workspaces", label: "📁 워크스페이스", active: pathname === "/workspaces" },
-    { href: "/sessions", label: "📋 대화 목록", active: pathname === "/sessions" },
-    { href: "/cross-reasoning", label: "🔀 교차추론", active: pathname === "/cross-reasoning" },
-    { href: "/admin", label: "📚 문서 관리", active: pathname === "/admin" },
-    { href: "/admin/chunking", label: "⚙️ 청킹", active: pathname === "/admin/chunking" },
-    { href: "/admin/prompts", label: "📝 프롬프트", active: pathname === "/admin/prompts" },
-    { href: "/admin/api-keys", label: "🔑 API 키", active: pathname === "/admin/api-keys" },
-    { href: "/evaluation", label: "📊 평가", active: pathname === "/evaluation" },
-    { href: "/feedback", label: "🔄 피드백", active: pathname === "/feedback" },
-    { href: "/settings", label: "⚙️ 설정", active: pathname === "/settings" },
-    { href: `${API_BASE_URL}/scalar`, label: "📖 API 문서", active: false, external: true },
+  // 로그인 페이지에서는 NavBar 숨김
+  if (pathname === "/login") return null;
+
+  // 로딩 중이면 빈 NavBar
+  if (loading) {
+    return (
+      <nav className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-6 py-0 flex items-center gap-6 shrink-0">
+        <Link href="/" className="text-lg font-bold text-gray-900 dark:text-white py-3 mr-4">
+          mAI-Brain
+        </Link>
+        <div className="flex-1" />
+        <ThemeToggle />
+      </nav>
+    );
+  }
+
+  // 로그인하지 않은 경우: 최소 메뉴만 표시
+  if (!user) {
+    return (
+      <nav className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-6 py-0 flex items-center gap-6 shrink-0">
+        <Link href="/" className="text-lg font-bold text-gray-900 dark:text-white py-3 mr-4">
+          mAI-Brain
+        </Link>
+        <div className="flex-1" />
+        <Link
+          href="/login"
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+        >
+          로그인
+        </Link>
+        <ThemeToggle />
+      </nav>
+    );
+  }
+
+  // 로그인한 사용자: role에 따라 메뉴 필터링
+  const allLinks = [
+    { href: "/", label: "💬 채팅", active: pathname === "/", adminOnly: false },
+    { href: "/workspaces", label: "📁 워크스페이스", active: pathname === "/workspaces", adminOnly: false },
+    { href: "/sessions", label: "📋 대화 목록", active: pathname === "/sessions", adminOnly: false },
+    { href: "/cross-reasoning", label: "🔀 교차추론", active: pathname === "/cross-reasoning", adminOnly: false },
+    { href: "/admin", label: "📚 문서 관리", active: pathname === "/admin", adminOnly: true },
+    { href: "/admin/chunking", label: "⚙️ 청킹", active: pathname === "/admin/chunking", adminOnly: true },
+    { href: "/admin/prompts", label: "📝 프롬프트", active: pathname === "/admin/prompts", adminOnly: true },
+    { href: "/admin/api-keys", label: "🔑 API 키", active: pathname === "/admin/api-keys", adminOnly: true },
+    { href: "/admin/users", label: "👥 사용자", active: pathname === "/admin/users", adminOnly: true },
+    { href: "/evaluation", label: "📊 평가", active: pathname === "/evaluation", adminOnly: true },
+    { href: "/feedback", label: "🔄 피드백", active: pathname === "/feedback", adminOnly: false },
+    { href: "/settings", label: "⚙️ 설정", active: pathname === "/settings", adminOnly: true },
+    { href: `${API_BASE_URL}/scalar`, label: "📖 API 문서", active: false, adminOnly: true, external: true },
   ];
 
+  const links = allLinks.filter((link) => !link.adminOnly || isAdmin);
+
   return (
-    <nav className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-6 py-0 flex items-center gap-6 shrink-0">
-      <Link
-        href="/"
-        className="text-lg font-bold text-gray-900 dark:text-white py-3 mr-4"
-      >
+    <nav className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-6 py-0 flex items-center gap-4 shrink-0">
+      <Link href="/" className="text-lg font-bold text-gray-900 dark:text-white py-3 mr-2">
         mAI-Brain
       </Link>
       {links.map((link) =>
@@ -61,8 +101,20 @@ export default function NavBar() {
           </Link>
         ),
       )}
-      {/* spacer — 토글 버튼을 오른쪽으로 밀기 */}
       <div className="flex-1" />
+      {/* 사용자 정보 */}
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-gray-600 dark:text-gray-400">
+          {user.display_name || user.username}
+          {isAdmin && <span className="ml-1 text-xs text-purple-600 dark:text-purple-400">관리자</span>}
+        </span>
+        <button
+          onClick={logout}
+          className="text-sm text-gray-500 hover:text-red-600 dark:text-gray-400 dark:hover:text-red-400 transition-colors"
+        >
+          로그아웃
+        </button>
+      </div>
       <ThemeToggle />
     </nav>
   );

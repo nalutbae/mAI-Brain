@@ -7,6 +7,7 @@ import {
   uploadMultipleDocuments,
   deleteDocument,
 } from "../../lib/api";
+import { AdminGuard } from "../../components/AuthGuard";
 
 // ── 상태 뱃지 컴포넌트 ──────────────────────────────────────────────────────
 
@@ -296,6 +297,14 @@ function DocumentTable({
 // ── 관리자 페이지 메인 ────────────────────────────────────────────────────
 
 export default function AdminPage() {
+  return (
+    <AdminGuard>
+      <AdminContent />
+    </AdminGuard>
+  );
+}
+
+function AdminContent() {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
