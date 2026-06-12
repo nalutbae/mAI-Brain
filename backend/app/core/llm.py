@@ -86,6 +86,18 @@ DEFAULT_MODE_INSTRUCTIONS: dict[ChatMode, str] = {
 6. 추론할 수 없는 질문에는 '추론에 필요한 충분한 근거가 검색되지 않았습니다'라고 답하라.
 7. 답변 구조: 문서 분석 → 연결점 → 추론 → 결론 순으로 작성하라.
 8. 최종 답변은 한국어로, 원문 용어는 그대로 사용하라.""",
+
+    ChatMode.CREATIVE: """\
+[창의적 대화 모드]
+당신은 도움이 되고 창의적인 AI 대화 파트너입니다. 문서 검색 없이 자유롭게 답변합니다.
+
+규칙:
+1. 항상 한국어로 답변하라.
+2. 창의적이고 유연하게 사고하라. 상상력을 발휘해도 좋다.
+3. 필요시 번호로 요약하거나 구조화하라.
+4. 확실하지 않은 정보는 "제가 알기로는..." 또는 "일반적으로..."라고 표시하라.
+5. 출처 표기는 하지 않는다. 이 모드는 문서 기반이 아닌 일반 대화용이다.
+6. 이전 대화 맥락을 자연스럽게 이어가라.""",
 }
 
 # 추론 강도별 추가 프롬프트
@@ -337,10 +349,8 @@ class LLMClient:
         base_url = provider.get_effective_base_url().rstrip("/")
         model = provider.get_effective_model()
 
-        # API 키: JSON 설정 → OLLAMA_API_KEY 환경변수 → 더미값
-        api_key = provider.api_key
-        if not api_key:
-            api_key = os.environ.get("OLLAMA_API_KEY", "")
+        # API 키: 환경변수에서 로드 (api_key_env_var → 프로바이더 기본 환경변수)
+        api_key = provider.get_effective_api_key()
         if not api_key:
             api_key = "ollama"  # 로컬 Ollama는 더미값
 
@@ -401,19 +411,8 @@ class LLMClient:
         base_url = provider.get_effective_base_url()
         model = provider.get_effective_model()
 
-        # API 키: JSON 설정 → 환경변수 → 프로바이더별 기본값 순서로 해석
-        api_key = provider.api_key
-        if not api_key:
-            # 프로바이더별 환경변수에서 폴백
-            env_var_map = {
-                LLMProviderType.OPENAI: "OPENAI_API_KEY",
-                LLMProviderType.ANTHROPIC: "ANTHROPIC_API_KEY",
-                LLMProviderType.GROQ: "GROQ_API_KEY",
-                LLMProviderType.DEEPSEEK: "DEEPSEEK_API_KEY",
-            }
-            env_var = env_var_map.get(provider.provider, "")
-            if env_var:
-                api_key = os.environ.get(env_var, "")
+        # API 키: 환경변수에서 로드 (api_key_env_var → 프로바이더 기본 환경변수)
+        api_key = provider.get_effective_api_key()
         if not api_key and provider.provider == LLMProviderType.OLLAMA:
             api_key = "ollama"  # Ollama는 더미값
 
@@ -481,7 +480,7 @@ class LLMClient:
         """Anthropic Messages API 호출."""
         base_url = provider.get_effective_base_url()
         model = provider.get_effective_model()
-        api_key = provider.api_key
+        api_key = provider.get_effective_api_key()
 
         if not api_key:
             logger.warning("Anthropic API 키 없음 — 호출 스킵")
@@ -561,7 +560,13 @@ class LLMClient:
     def _build_user_prompt(
         self, query: str, context_text: str, mode: ChatMode,
     ) -> str:
-        """사용자 메시지 구성."""
+        """사용자 메시지 구성.
+
+        creative 모드는 검색 결과 없이 질문만 전달.
+        나머지 모드는 기존처럼 문서 참고 프롬프트 포함.
+        """
+        if mode == ChatMode.CREATIVE:
+            return query
         return f"""다음 문서를 참고하여 질문에 답변하라.
 
 [참고 문서]

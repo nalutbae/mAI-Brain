@@ -35,7 +35,10 @@ class LLMProviderCreate(BaseModel):
     id: str = Field(default="", description="프로바이더 ID (빈값 → 자동 생성)")
     provider: NewLLMProviderType
     name: str = Field(default="", description="표시 이름")
-    api_key: str = Field(default="", description="API 키")
+    api_key_env_var: str = Field(
+        default="",
+        description="API 키를 로드할 환경변수명. 빈값 → 프로바이더 기본 환경변수",
+    )
     base_url: str = Field(default="", description="빈값 → 프로바이더 기본 URL")
     model: str = Field(default="", description="빈값 → 프로바이더 기본 모델")
     is_active: bool = Field(default=False)
@@ -47,7 +50,7 @@ class LLMProviderCreate(BaseModel):
 class LLMProviderUpdate(BaseModel):
     """LLM 프로바이더 업데이트 요청"""
     name: Optional[str] = None
-    api_key: Optional[str] = None
+    api_key_env_var: Optional[str] = None
     base_url: Optional[str] = None
     model: Optional[str] = None
     is_active: Optional[bool] = None
@@ -59,7 +62,10 @@ class LLMProviderUpdate(BaseModel):
 class EmbeddingProviderUpdate(BaseModel):
     """임베딩 프로바이더 업데이트 요청"""
     provider: EmbeddingProviderType
-    api_key: str = Field(default="")
+    api_key_env_var: str = Field(
+        default="",
+        description="API 키를 로드할 환경변수명. 빈값 → 프로바이더 기본 환경변수",
+    )
     base_url: str = Field(default="")
     model: str = Field(default="")
     dim: int = Field(default=0)
@@ -68,7 +74,10 @@ class EmbeddingProviderUpdate(BaseModel):
 class ConnectionTestRequest(BaseModel):
     """연결 테스트 요청"""
     provider: NewLLMProviderType
-    api_key: str = Field(default="")
+    api_key_env_var: str = Field(
+        default="",
+        description="API 키를 로드할 환경변수명. 빈값 → 프로바이더 기본 환경변수",
+    )
     base_url: str = Field(default="")
     model: str = Field(default="")
 
@@ -91,17 +100,20 @@ class MaskedAPIKey(BaseModel):
 # 유틸리티
 # ---------------------------------------------------------------------------
 
-def _mask_api_key(key: str) -> str:
-    """API 키 마스킹 — 처음 4자리와 마지막 4자리만 표시."""
-    if not key or len(key) < 12:
-        return "****" if key else ""
-    return f"{key[:4]}...{key[-4:]}"
+def _api_key_status(provider: LLMProviderConfig | EmbeddingProviderConfig) -> dict:
+    """API 키 상태 반환 (키 값 자체는 노출하지 않음)."""
+    key = provider.get_effective_api_key()
+    return {
+        "is_set": bool(key),
+        "masked": f"{key[:4]}...{key[-4:]}" if key and len(key) >= 12 else ("****" if key else ""),
+    }
 
 
-def _mask_provider(provider: LLMProviderConfig) -> dict:
-    """프로바이더 설정을 응답용으로 마스킹."""
+def _serialize_provider(provider: LLMProviderConfig) -> dict:
+    """프로바이더 설정을 응답용으로 직렬화 (API 키 값 대신 상태만 노출)."""
     d = provider.model_dump()
-    d["api_key"] = _mask_api_key(provider.api_key)
+    # api_key는 exclude=True이므로 model_dump에 포함되지 않음
+    d["api_key_status"] = _api_key_status(provider)
     d["effective_base_url"] = provider.get_effective_base_url()
     d["effective_model"] = provider.get_effective_model()
     d["display_name"] = provider.get_display_name()
@@ -118,7 +130,7 @@ def list_llm_providers():
     store = ProviderSettingsStore.get()
     settings = store.get_settings()
     return {
-        "providers": [_mask_provider(p) for p in settings.llm_providers],
+        "providers": [_serialize_provider(p) for p in settings.llm_providers],
         "active_id": next(
             (p.id for p in settings.llm_providers if p.is_active),
             None,
@@ -134,7 +146,7 @@ def create_llm_provider(req: LLMProviderCreate):
         id=req.id or "",
         provider=req.provider,
         name=req.name,
-        api_key=req.api_key,
+        api_key_env_var=req.api_key_env_var,
         base_url=req.base_url,
         model=req.model,
         is_active=req.is_active,
@@ -143,7 +155,7 @@ def create_llm_provider(req: LLMProviderCreate):
         fallback_provider_id=req.fallback_provider_id,
     )
     created = store.add_llm_provider(config)
-    return _mask_provider(created)
+    return _serialize_provider(created)
 
 
 @router.put("/providers/llm/{provider_id}")
@@ -154,7 +166,7 @@ def update_llm_provider(provider_id: str, req: LLMProviderUpdate):
     updated = store.update_llm_provider(provider_id, updates)
     if updated is None:
         raise HTTPException(status_code=404, detail=f"프로바이더 '{provider_id}'를 찾을 수 없습니다.")
-    return _mask_provider(updated)
+    return _serialize_provider(updated)
 
 
 @router.delete("/providers/llm/{provider_id}")
@@ -175,7 +187,7 @@ def activate_llm_provider(provider_id: str):
         raise HTTPException(status_code=404, detail=f"프로바이더 '{provider_id}'를 찾을 수 없습니다.")
     # LLMClient는 ProviderSettingsStore에서 동적으로 읽으므로
     # 설정만 변경하면 됨 — 싱글톤 리셋 불필요
-    return _mask_provider(activated)
+    return _serialize_provider(activated)
 
 
 # ---------------------------------------------------------------------------
@@ -188,7 +200,7 @@ def get_embedding_provider():
     store = ProviderSettingsStore.get()
     config = store.get_settings().embedding
     d = config.model_dump()
-    d["api_key"] = _mask_api_key(config.api_key)
+    d["api_key_status"] = _api_key_status(config)
     return d
 
 
@@ -198,14 +210,14 @@ def update_embedding_provider(req: EmbeddingProviderUpdate):
     store = ProviderSettingsStore.get()
     config = EmbeddingProviderConfig(
         provider=req.provider,
-        api_key=req.api_key,
+        api_key_env_var=req.api_key_env_var,
         base_url=req.base_url,
         model=req.model,
         dim=req.dim,
     )
     updated = store.update_embedding_provider(config)
     d = updated.model_dump()
-    d["api_key"] = _mask_api_key(updated.api_key)
+    d["api_key_status"] = _api_key_status(updated)
     # 임베딩 프로바이더 변경 시 싱글톤 리셋 필요
     from app.core.embedding import reset_embedding_provider
     reset_embedding_provider()
@@ -241,7 +253,14 @@ async def test_provider_connection(req: ConnectionTestRequest):
     defaults = LLM_PROVIDER_DEFAULTS.get(req.provider.value)
     base_url = req.base_url or (defaults.base_url if defaults else "")
     model = req.model or (defaults.default_model if defaults else "")
-    api_key = req.api_key
+
+    # API 키: 명시적 환경변수명 → 프로바이더 기본 환경변수 → 빈값
+    import os
+    api_key = ""
+    if req.api_key_env_var:
+        api_key = os.environ.get(req.api_key_env_var, "")
+    if not api_key and defaults and defaults.api_key_env_var:
+        api_key = os.environ.get(defaults.api_key_env_var, "")
 
     if not base_url or not model:
         return ConnectionTestResponse(
@@ -348,7 +367,7 @@ def get_full_settings():
     settings = store.get_settings()
     return {
         "llm": {
-            "providers": [_mask_provider(p) for p in settings.llm_providers],
+            "providers": [_serialize_provider(p) for p in settings.llm_providers],
             "active_id": next(
                 (p.id for p in settings.llm_providers if p.is_active),
                 None,
@@ -356,7 +375,8 @@ def get_full_settings():
         },
         "embedding": {
             "provider": settings.embedding.provider.value,
-            "api_key": _mask_api_key(settings.embedding.api_key),
+            "api_key_env_var": settings.embedding.api_key_env_var,
+            "api_key_status": _api_key_status(settings.embedding),
             "base_url": settings.embedding.base_url,
             "model": settings.embedding.model,
             "dim": settings.embedding.dim,

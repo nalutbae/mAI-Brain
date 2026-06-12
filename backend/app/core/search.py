@@ -31,10 +31,10 @@ def _get_top_k(mode: ChatMode) -> int:
     """검색 모드에 따른 top-k 반환.
 
     Args:
-        mode: 채팅 모드 (fact/summary/column/reasoning)
+        mode: 채팅 모드 (fact/summary/column/reasoning/creative)
 
     Returns:
-        검색 결과 수
+        검색 결과 수 (creative는 0 = 검색 안 함)
     """
     settings = get_settings()
     mode_top_k = {
@@ -42,6 +42,7 @@ def _get_top_k(mode: ChatMode) -> int:
         ChatMode.SUMMARY: settings.top_k_summary,
         ChatMode.COLUMN: settings.top_k_column,
         ChatMode.REASONING: settings.top_k_reasoning,
+        ChatMode.CREATIVE: 0,  # 검색하지 않음
     }
     return mode_top_k.get(mode, settings.top_k_fact)
 

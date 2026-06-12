@@ -22,7 +22,7 @@ from app.config import ChatMode
 SUPPORTED_VARIABLES = {
     "workspace_name": "워크스페이스 이름",
     "document_count": "워크스페이스 내 문서 수",
-    "mode": "현재 채팅 모드 (fact/summary/column/reasoning)",
+    "mode": "현재 채팅 모드 (fact/summary/column/reasoning/creative)",
     "date": "현재 날짜 (YYYY-MM-DD)",
     "workspace_id": "워크스페이스 ID",
     "collection_name": "Qdrant 컬렉션명",

@@ -16,6 +16,7 @@ venv/
 data/backups/
 data/uploads/
 data/qdrant_storage/
+data/provider_settings.json
 qdrant_storage/
 logs/
 *.db

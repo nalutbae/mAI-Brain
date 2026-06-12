@@ -109,20 +109,24 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
         logger.info("워크스페이스 검색: workspace_id=%s, collection=%s",
                      request.workspace_id, collection_name)
 
-    # 2. 하이브리드 검색
-    try:
-        search_result = hybrid_search(
-            query=request.question,
-            mode=request.mode,
-            session_id=session_id,
-            collection_name=collection_name,
-        )
-    except Exception as exc:
-        logger.error("검색 오류: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"검색 중 오류가 발생했습니다: {exc}",
-        ) from exc
+    # 2. 하이브리드 검색 (creative 모드는 검색 생략)
+    is_creative = request.mode == ChatMode.CREATIVE
+    if is_creative:
+        search_result = None
+    else:
+        try:
+            search_result = hybrid_search(
+                query=request.question,
+                mode=request.mode,
+                session_id=session_id,
+                collection_name=collection_name,
+            )
+        except Exception as exc:
+            logger.error("검색 오류: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=500,
+                detail=f"검색 중 오류가 발생했습니다: {exc}",
+            ) from exc
 
     # 3. 이전 대화 기록 로드
     chat_history = store.get_chat_history(session_id, limit=10)
@@ -133,7 +137,7 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
         llm = get_llm_client()
         answer = llm.generate_answer(
             query=request.question,
-            contexts=search_result.hits,
+            contexts=search_result.hits if search_result else [],
             mode=request.mode,
             chat_history=chat_history,
             reasoning_strength=request.reasoning_strength,
@@ -143,7 +147,7 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
         logger.error("LLM 오류: %s", exc, exc_info=True)
         return ChatResponse(
             answer=f"AI 모델 응답 생성 중 오류가 발생했습니다: {exc}",
-            sources=search_result.hits if search_result.hits else None,
+            sources=search_result.hits if search_result and search_result.hits else None,
             mode=request.mode,
             session_id=session_id,
         )
@@ -157,7 +161,7 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
     )
 
     sources_for_db = None
-    if search_result.hits:
+    if search_result and search_result.hits:
         sources_for_db = [
             {
                 "text": h.text[:200],
@@ -179,7 +183,7 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
     # 6. 응답 반환
     return ChatResponse(
         answer=answer,
-        sources=search_result.hits if search_result.hits else None,
+        sources=search_result.hits if search_result and search_result.hits else None,
         mode=request.mode,
         session_id=session_id,
     )

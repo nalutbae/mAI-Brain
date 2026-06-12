@@ -215,7 +215,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
       const aiMessage: Message = {
         role: "assistant",
         content: response.answer,
-        sources: response.sources?.map((s) => s.source),
+        sources: mode === "creative" ? undefined : response.sources?.map((s) => s.source),
       };
 
       setMessages((prev) => [...prev, aiMessage]);
@@ -470,7 +470,9 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
               placeholder={
                 interimTranscript
                   ? `🎤 ${interimTranscript}`
-                  : "질문을 입력하세요... (@agent 로 에이전트 모드)"
+                  : mode === "creative"
+                    ? "무엇이든 자유롭게 물어보세요..."
+                    : "질문을 입력하세요... (@agent 로 에이전트 모드)"
               }
               className={`w-full resize-none rounded-lg border px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-gray-800 dark:text-white ${
                 interimTranscript

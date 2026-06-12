@@ -39,6 +39,7 @@ class ChatMode(str, Enum):
     SUMMARY = "summary"
     COLUMN = "column"
     REASONING = "reasoning"
+    CREATIVE = "creative"
 
 
 class ReasoningStrength(str, Enum):

@@ -145,7 +145,11 @@ class LLMProviderConfig(BaseModel):
     id: str = Field(default="default", description="프로바이더 설정 ID")
     provider: LLMProviderType = Field(default=LLMProviderType.OLLAMA)
     name: str = Field(default="", description="사용자 정의 이름 (빈값 → 기본 이름)")
-    api_key: str = Field(default="", description="API 키 (마스킹 처리)")
+    api_key_env_var: str = Field(
+        default="",
+        description="API 키를 로드할 환경변수명 (예: DEEPSEEK_API_KEY). "
+                    "빈값 → 프로바이더 기본 환경변수 사용",
+    )
     base_url: str = Field(default="", description="빈값 → 프로바이더 기본 URL")
     model: str = Field(default="", description="빈값 → 프로바이더 기본 모델")
     is_active: bool = Field(default=True, description="현재 활성 프로바이더 여부")
@@ -154,6 +158,27 @@ class LLMProviderConfig(BaseModel):
     fallback_provider_id: str = Field(default="", description="폴백 프로바이더 ID")
     created_at: str = Field(default="")
     updated_at: str = Field(default="")
+
+    # ── 레거시 호환: 기존 JSON에 api_key가 있으면 읽어들여 마이그레이션 ──
+    api_key: str = Field(
+        default="",
+        exclude=True,  # model_dump / 직렬화에서 제외 → JSON에 저장 안 함
+        description="[레거시] 기존 JSON에서 읽은 평문 API 키. 마이그레이션 후 제거됨.",
+    )
+
+    def get_effective_api_key(self) -> str:
+        """환경변수에서 API 키 로드. api_key_env_var → 프로바이더 기본 환경변수 순서."""
+        # 1) 명시적으로 지정된 환경변수명
+        if self.api_key_env_var:
+            return os.environ.get(self.api_key_env_var, "")
+        # 2) 프로바이더 기본 환경변수
+        defaults = LLM_PROVIDER_DEFAULTS.get(self.provider.value)
+        if defaults and defaults.api_key_env_var:
+            return os.environ.get(defaults.api_key_env_var, "")
+        # 3) Ollama는 더미값
+        if self.provider == LLMProviderType.OLLAMA:
+            return os.environ.get("OLLAMA_API_KEY", "") or "ollama"
+        return ""
 
     def get_effective_base_url(self) -> str:
         """빈값이면 프로바이더 기본 URL 반환"""
@@ -179,10 +204,32 @@ class LLMProviderConfig(BaseModel):
 class EmbeddingProviderConfig(BaseModel):
     """임베딩 프로바이더 설정"""
     provider: EmbeddingProviderType = Field(default=EmbeddingProviderType.LOCAL)
-    api_key: str = Field(default="")
+    api_key_env_var: str = Field(
+        default="",
+        description="API 키를 로드할 환경변수명. 빈값 → 프로바이더 기본 환경변수 사용",
+    )
     base_url: str = Field(default="", description="빈값 → 프로바이더 기본 URL")
     model: str = Field(default="", description="빈값 → 프로바이더 기본 모델")
     dim: int = Field(default=0, description="임베딩 차원 (0 → 프로바이더 기본값)")
+
+    # ── 레거시 호환: 기존 JSON에 api_key가 있으면 읽어들여 마이그레이션 ──
+    api_key: str = Field(
+        default="",
+        exclude=True,
+        description="[레거시] 기존 JSON에서 읽은 평문 API 키. 마이그레이션 후 제거됨.",
+    )
+
+    def get_effective_api_key(self) -> str:
+        """환경변수에서 API 키 로드."""
+        # 1) 명시적으로 지정된 환경변수명
+        if self.api_key_env_var:
+            return os.environ.get(self.api_key_env_var, "")
+        # 2) 프로바이더 기본 환경변수
+        info = EMBEDDING_PROVIDER_DEFAULTS.get(self.provider.value, {})
+        env_var = info.get("api_key_env_var", "")
+        if env_var:
+            return os.environ.get(env_var, "")
+        return ""
 
 
 class AppSettings(BaseModel):
@@ -191,7 +238,7 @@ class AppSettings(BaseModel):
     embedding: EmbeddingProviderConfig = Field(default_factory=EmbeddingProviderConfig)
     # 호환성: 기존 .env 설정값을 유지
     llm_provider: str = Field(default="ollama-cloud", description="레거시 LLM_PROVIDER 값")
-    deepseek_api_key: str = Field(default="")
+    deepseek_api_key: str = Field(default="", exclude=True, description="[레거시] .env에서 읽은 키")
     deepseek_base_url: str = Field(default="https://api.deepseek.com/v1")
     deepseek_model: str = Field(default="deepseek-chat")
     ollama_base_url: str = Field(default="https://ollama.com/api/chat")
@@ -242,6 +289,9 @@ class ProviderSettingsStore:
                 raw = self._path.read_text(encoding="utf-8")
                 data = json.loads(raw)
                 self._data = AppSettings(**data)
+                # 마이그레이션: 기존 JSON에 평문 api_key가 있으면 환경변수명으로 전환
+                self._migrate_api_keys()
+                self._save()  # 마이그레이션 결과 반영
                 return
             except (json.JSONDecodeError, Exception):
                 pass
@@ -250,6 +300,48 @@ class ProviderSettingsStore:
         self._data = AppSettings()
         self._init_from_env()
         self._save()
+
+    def _migrate_api_keys(self) -> None:
+        """기존 JSON에 평문 api_key가 있으면 api_key_env_var로 마이그레이션.
+
+        마이그레이션 전략:
+        - LLM: provider 타입별 기본 환경변수명(DEEPSEEK_API_KEY 등)을 api_key_env_var에 설정
+        - Embedding: provider 타입별 기본 환경변수명(OPENAI_API_KEY 등)을 api_key_env_var에 설정
+        - 평문 키는 환경변수에 아직 없으면 경고 로그 출력
+        """
+        migrated = False
+        for p in self._data.llm_providers:
+            if p.api_key and not p.api_key_env_var:
+                # 프로바이더 기본 환경변수명 설정
+                defaults = LLM_PROVIDER_DEFAULTS.get(p.provider.value)
+                env_var = defaults.api_key_env_var if defaults else ""
+                if env_var:
+                    p.api_key_env_var = env_var
+                    # 환경변수에 키가 아직 없으면 경고
+                    if not os.environ.get(env_var):
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "마이그레이션: %s 프로바이더의 API 키를 환경변수 %s로 이전했습니다. "
+                            ".env 파일에 %s=<키값>을 추가하세요.",
+                            p.provider.value, env_var, env_var,
+                        )
+                    migrated = True
+                # 평문 api_key는 model_dump에서 exclude=True이므로 저장 시 자동 제거됨
+
+        emb = self._data.embedding
+        if emb.api_key and not emb.api_key_env_var:
+            info = EMBEDDING_PROVIDER_DEFAULTS.get(emb.provider.value, {})
+            env_var = info.get("api_key_env_var", "")
+            if env_var:
+                emb.api_key_env_var = env_var
+                if not os.environ.get(env_var):
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "마이그레이션: %s 임베딩 프로바이더의 API 키를 환경변수 %s로 이전했습니다. "
+                        ".env 파일에 %s=<키값>을 추가하세요.",
+                        emb.provider.value, env_var, env_var,
+                    )
+                migrated = True
 
     def _save(self) -> None:
         """JSON 파일에 설정 저장."""
@@ -260,13 +352,16 @@ class ProviderSettingsStore:
         )
 
     def _init_from_env(self) -> None:
-        """레거시 .env 환경변수에서 초기 프로바이더 구성."""
+        """레거시 .env 환경변수에서 초기 프로바이더 구성.
+        
+        API 키는 JSON에 저장하지 않고 환경변수 참조만 설정.
+        """
         # ollama-cloud 프로바이더 (1순위)
         ollama_provider = LLMProviderConfig(
             id="ollama-cloud",
             provider=LLMProviderType.OLLAMA,
             name="Ollama Cloud",
-            api_key="",
+            api_key_env_var="OLLAMA_API_KEY",  # 환경변수명 참조
             base_url=self._data.ollama_base_url or "http://localhost:11434",
             model=self._data.ollama_model or "glm-5.1",
             is_active=True,
@@ -280,7 +375,7 @@ class ProviderSettingsStore:
             id="deepseek",
             provider=LLMProviderType.DEEPSEEK,
             name="DeepSeek",
-            api_key=self._data.deepseek_api_key,
+            api_key_env_var="DEEPSEEK_API_KEY",  # 환경변수명 참조
             base_url=self._data.deepseek_base_url or "https://api.deepseek.com/v1",
             model=self._data.deepseek_model or "deepseek-chat",
             is_active=False,
@@ -299,10 +394,18 @@ class ProviderSettingsStore:
         elif provider_str == "ollama" or os.environ.get("EMBEDDING_PROVIDER") == "ollama":
             emb_provider = EmbeddingProviderType.OLLAMA
 
+        # 임베딩 API 키도 환경변수명만 저장
+        emb_env_var = ""
+        if emb_provider == EmbeddingProviderType.OPENAI:
+            emb_env_var = "OPENAI_API_KEY"
+        elif emb_provider == EmbeddingProviderType.JINA:
+            emb_env_var = "JINA_API_KEY"
+        elif emb_provider == EmbeddingProviderType.COHERE:
+            emb_env_var = "COHERE_API_KEY"
+
         self._data.embedding = EmbeddingProviderConfig(
             provider=emb_provider,
-            api_key=os.environ.get("OPENAI_API_KEY", "")
-            or os.environ.get("EMBEDDING_API_KEY", ""),
+            api_key_env_var=emb_env_var,
             base_url=os.environ.get("EMBEDDING_API_BASE_URL", ""),
             model=os.environ.get("EMBEDDING_API_MODEL", ""),
             dim=int(os.environ.get("OLLAMA_EMBEDDING_DIM", "0") or "0"),

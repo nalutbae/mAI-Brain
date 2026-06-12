@@ -4,7 +4,7 @@
       "id": "ollama-cloud",
       "provider": "ollama",
       "name": "Ollama Cloud",
-      "api_key": "",
+      "api_key_env_var": "",
       "base_url": "https://ollama.com/api/chat",
       "model": "glm-5.1",
       "is_active": true,
@@ -12,13 +12,13 @@
       "max_tokens": 2048,
       "fallback_provider_id": "deepseek",
       "created_at": "2026-06-08T16:07:00.128285+00:00",
-      "updated_at": "2026-06-08T16:07:00.151606+00:00"
+      "updated_at": "2026-06-09T05:36:33.283155+00:00"
     },
     {
       "id": "deepseek",
       "provider": "deepseek",
       "name": "DeepSeek",
-      "api_key": "",
+      "api_key_env_var": "DEEPSEEK_API_KEY",
       "base_url": "https://api.deepseek.com/v1",
       "model": "deepseek-chat",
       "is_active": false,
@@ -26,18 +26,31 @@
       "max_tokens": 2048,
       "fallback_provider_id": "",
       "created_at": "2026-06-08T16:07:00.151650+00:00",
-      "updated_at": "2026-06-08T16:07:00.151653+00:00"
+      "updated_at": "2026-06-09T05:37:31.669386+00:00"
+    },
+    {
+      "id": "provider-3",
+      "provider": "openai",
+      "name": "",
+      "api_key_env_var": "OPENAI_API_KEY",
+      "base_url": "",
+      "model": "",
+      "is_active": false,
+      "temperature": 0.1,
+      "max_tokens": 2048,
+      "fallback_provider_id": "",
+      "created_at": "2026-06-09T05:38:11.572555+00:00",
+      "updated_at": "2026-06-09T05:38:11.572662+00:00"
     }
   ],
   "embedding": {
     "provider": "local",
-    "api_key": "",
+    "api_key_env_var": "",
     "base_url": "",
     "model": "",
     "dim": 0
   },
   "llm_provider": "ollama-cloud",
-  "deepseek_api_key": "",
   "deepseek_base_url": "https://api.deepseek.com/v1",
   "deepseek_model": "deepseek-chat",
   "ollama_base_url": "http://localhost:11434",

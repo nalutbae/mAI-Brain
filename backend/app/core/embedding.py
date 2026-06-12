@@ -149,13 +149,10 @@ class OpenAIEmbedding(EmbeddingProvider):
         defaults = EMBEDDING_PROVIDER_DEFAULTS.get("openai", {})
         self._model = config.model or defaults.get("default_model", "text-embedding-3-small")
         self._base_url = config.base_url or defaults.get("default_base_url", "https://api.openai.com/v1")
-        self._api_key = api_key or config.api_key
+        self._api_key = api_key or config.get_effective_api_key()
 
         if not self._api_key:
-            import os
-            self._api_key = os.environ.get("OPENAI_API_KEY", "")
-        if not self._api_key:
-            raise ValueError("OpenAI API 키가 필요합니다. OPENAI_API_KEY를 설정하세요.")
+            raise ValueError("OpenAI API 키가 필요합니다. OPENAI_API_KEY 환경변수를 설정하세요.")
 
         try:
             from openai import OpenAI  # noqa: PLC0415
@@ -198,13 +195,10 @@ class JinaEmbedding(EmbeddingProvider):
         defaults = EMBEDDING_PROVIDER_DEFAULTS.get("jina", {})
         self._model = config.model or defaults.get("default_model", "jina-embeddings-v3")
         self._base_url = config.base_url or defaults.get("default_base_url", "https://api.jina.ai/v1")
-        self._api_key = api_key or config.api_key
+        self._api_key = api_key or config.get_effective_api_key()
 
         if not self._api_key:
-            import os
-            self._api_key = os.environ.get("JINA_API_KEY", "")
-        if not self._api_key:
-            raise ValueError("Jina API 키가 필요합니다. JINA_API_KEY를 설정하세요.")
+            raise ValueError("Jina API 키가 필요합니다. JINA_API_KEY 환경변수를 설정하세요.")
 
         try:
             from openai import OpenAI  # noqa: PLC0415
@@ -248,7 +242,7 @@ class OllamaEmbedding(EmbeddingProvider):
         self._model = config.model or defaults.get("default_model", "nomic-embed-text")
         self._base_url = config.base_url or defaults.get("default_base_url", "http://localhost:11434")
         self._dim = config.dim or defaults.get("default_dim", 768)
-        self._api_key = api_key or config.api_key or "ollama"
+        self._api_key = api_key or config.get_effective_api_key() or "ollama"
 
         if not self._base_url.rstrip("/").endswith("/v1"):
             self._base_url = self._base_url.rstrip("/") + "/v1"
@@ -300,13 +294,10 @@ class CohereEmbedding(EmbeddingProvider):
     ) -> None:
         defaults = EMBEDDING_PROVIDER_DEFAULTS.get("cohere", {})
         self._model = config.model or defaults.get("default_model", "embed-multilingual-v3.0")
-        self._api_key = api_key or config.api_key
+        self._api_key = api_key or config.get_effective_api_key()
 
         if not self._api_key:
-            import os
-            self._api_key = os.environ.get("COHERE_API_KEY", "")
-        if not self._api_key:
-            raise ValueError("Cohere API 키가 필요합니다. COHERE_API_KEY를 설정하세요.")
+            raise ValueError("Cohere API 키가 필요합니다. COHERE_API_KEY 환경변수를 설정하세요.")
 
         self._dim = self.MODEL_DIMS.get(self._model, 1024)
 

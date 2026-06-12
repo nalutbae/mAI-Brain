@@ -32,7 +32,7 @@ export async function healthCheck(): Promise<{ status: string; app: string }> {
 
 // ── 채팅 메시지 ───────────────────────────────────────────────────────────
 
-export type ChatMode = "fact" | "summary" | "column" | "reasoning";
+export type ChatMode = "fact" | "summary" | "column" | "reasoning" | "creative";
 
 export interface ChatMessage {
   role: "user" | "assistant";
@@ -493,11 +493,17 @@ export async function getSessionFeedback(sessionId: string): Promise<Feedback[]>
 export type LLMProvider = "ollama" | "openai" | "anthropic" | "groq" | "deepseek" | "custom";
 export type EmbeddingProvider = "local" | "openai" | "jina" | "ollama" | "cohere";
 
+export interface APIKeyStatus {
+  is_set: boolean;
+  masked: string;
+}
+
 export interface LLMProviderConfig {
   id: string;
   provider: LLMProvider;
   name: string;
-  api_key: string;  // 마스킹됨
+  api_key_env_var: string;
+  api_key_status: APIKeyStatus;
   base_url: string;
   model: string;
   is_active: boolean;
@@ -513,7 +519,8 @@ export interface LLMProviderConfig {
 
 export interface EmbeddingConfig {
   provider: EmbeddingProvider;
-  api_key: string;  // 마스킹됨
+  api_key_env_var: string;
+  api_key_status: APIKeyStatus;
   base_url: string;
   model: string;
   dim: number;
@@ -544,7 +551,7 @@ export async function createLLMProvider(data: {
   id?: string;
   provider: LLMProvider;
   name?: string;
-  api_key?: string;
+  api_key_env_var?: string;
   base_url?: string;
   model?: string;
   is_active?: boolean;
@@ -583,7 +590,7 @@ export async function getEmbeddingProvider(): Promise<EmbeddingConfig> {
 
 export async function updateEmbeddingProvider(data: {
   provider: EmbeddingProvider;
-  api_key?: string;
+  api_key_env_var?: string;
   base_url?: string;
   model?: string;
   dim?: number;
@@ -615,7 +622,7 @@ export async function listAvailableEmbeddingProviders(): Promise<{
 // 연결 테스트
 export async function testProviderConnection(data: {
   provider: LLMProvider;
-  api_key?: string;
+  api_key_env_var?: string;
   base_url?: string;
   model?: string;
 }): Promise<ConnectionTestResult> {
@@ -831,7 +838,7 @@ export async function getVoiceStatus(): Promise<VoiceStatus> {
 
 // ── 시스템 프롬프트 ──────────────────────────────────────────────────────
 
-export type PromptMode = "fact" | "summary" | "column" | "reasoning";
+export type PromptMode = "fact" | "summary" | "column" | "reasoning" | "creative";
 
 export interface SystemPrompt {
   id: string;

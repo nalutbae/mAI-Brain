@@ -67,7 +67,7 @@ export default function SettingsPage() {
   const [availableLLM, setAvailableLLM] = useState<ProviderDefaults[]>([]);
   const [llmLoading, setLlmLoading] = useState(true);
   const [editingKeyId, setEditingKeyId] = useState<string | null>(null);
-  const [editApiKey, setEditApiKey] = useState("");
+  const [editApiKeyEnvVar, setEditApiKeyEnvVar] = useState("");
 
   // ── Embedding ────────────────────────────────────────────────────────
   const [embedding, setEmbedding] = useState<EmbeddingConfig | null>(null);
@@ -78,7 +78,7 @@ export default function SettingsPage() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newProvider, setNewProvider] = useState<LLMProvider>("ollama");
   const [newName, setNewName] = useState("");
-  const [newApiKey, setNewApiKey] = useState("");
+  const [newApiKeyEnvVar, setNewApiKeyEnvVar] = useState("");
   const [newBaseUrl, setNewBaseUrl] = useState("");
   const [newModel, setNewModel] = useState("");
   const [saving, setSaving] = useState(false);
@@ -87,13 +87,13 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<ConnectionTestResult | null>(null);
   const [testing, setTesting] = useState(false);
   const [testProvider, setTestProvider] = useState<LLMProvider>("ollama");
-  const [testApiKey, setTestApiKey] = useState("");
+  const [testApiKeyEnvVar, setTestApiKeyEnvVar] = useState("");
   const [testBaseUrl, setTestBaseUrl] = useState("");
   const [testModel, setTestModel] = useState("");
 
   // ── Embedding form ───────────────────────────────────────────────────
   const [embProvider, setEmbProvider] = useState<EmbeddingProvider>("local");
-  const [embApiKey, setEmbApiKey] = useState("");
+  const [embApiKeyEnvVar, setEmbApiKeyEnvVar] = useState("");
   const [embBaseUrl, setEmbBaseUrl] = useState("");
   const [embModel, setEmbModel] = useState("");
   const [embDim, setEmbDim] = useState(0);
@@ -123,7 +123,7 @@ export default function SettingsPage() {
       setAvailableLLM(availRes.providers);
       setEmbedding(embRes);
       setEmbProvider(embRes.provider);
-      setEmbApiKey("");
+      setEmbApiKeyEnvVar(embRes.api_key_env_var || "");
       setEmbBaseUrl(embRes.base_url);
       setEmbModel(embRes.model);
       setEmbDim(embRes.dim);
@@ -167,7 +167,7 @@ export default function SettingsPage() {
       const created = await createLLMProvider({
         provider: newProvider,
         name: newName || undefined,
-        api_key: newApiKey || undefined,
+        api_key_env_var: newApiKeyEnvVar || undefined,
         base_url: newBaseUrl || undefined,
         model: newModel || undefined,
         is_active: providers.length === 0,
@@ -177,7 +177,7 @@ export default function SettingsPage() {
       setShowAddForm(false);
       setNewProvider("ollama");
       setNewName("");
-      setNewApiKey("");
+      setNewApiKeyEnvVar("");
       setNewBaseUrl("");
       setNewModel("");
     } catch (e: any) {
@@ -193,7 +193,7 @@ export default function SettingsPage() {
     try {
       const result = await testProviderConnection({
         provider: testProvider,
-        api_key: testApiKey || undefined,
+        api_key_env_var: testApiKeyEnvVar || undefined,
         base_url: testBaseUrl || undefined,
         model: testModel || undefined,
       });
@@ -212,14 +212,14 @@ export default function SettingsPage() {
     try {
       const updated = await updateEmbeddingProvider({
         provider: embProvider,
-        api_key: embApiKey || undefined,
+        api_key_env_var: embApiKeyEnvVar || undefined,
         base_url: embBaseUrl || undefined,
         model: embModel || undefined,
         dim: embDim || 0,
       });
       setEmbedding(updated);
       setOriginalEmbProvider(embProvider);
-      setEmbApiKey("");
+      setEmbApiKeyEnvVar("");
       setEmbMessage("✅ 임베딩 설정 저장 완료 — 프로바이더가 전환되었습니다.");
       setTimeout(() => setEmbMessage(""), 5000);
     } catch (e: any) {
@@ -341,21 +341,21 @@ export default function SettingsPage() {
                   {requiresApiKey && (
                     <div>
                       <label className="block text-sm font-medium mb-1.5">
-                        API 키 <span className="text-red-500">*</span>
+                        API 키 환경변수명 <span className="text-red-500">*</span>
                       </label>
                       <input
-                        type="password"
-                        value={embApiKey}
-                        onChange={(e) => setEmbApiKey(e.target.value)}
+                        type="text"
+                        value={embApiKeyEnvVar}
+                        onChange={(e) => setEmbApiKeyEnvVar(e.target.value)}
                         placeholder={
-                          embProvider === "openai" ? "sk-..." :
-                          embProvider === "jina" ? "jina_..." :
-                          "API 키를 입력하세요"
+                          embedding?.api_key_status?.is_set
+                            ? `환경변수 설정됨 (${embedding.api_key_status.masked})`
+                            : "환경변수명 입력 (예: OPENAI_API_KEY)"
                         }
                         className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
                       />
                       <p className="text-xs text-gray-400 mt-1">
-                        빈값 → 서버 환경변수에서 자동 로드
+                        서버에 설정된 환경변수명을 입력하세요 (예: OPENAI_API_KEY)
                       </p>
                     </div>
                   )}
@@ -411,7 +411,7 @@ export default function SettingsPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   onClick={handleSaveEmbedding}
-                  disabled={embSaving || (requiresApiKey && !embApiKey && !embedding?.api_key?.includes("*"))}
+                  disabled={embSaving || (requiresApiKey && !embApiKeyEnvVar && !(embedding?.api_key_status?.is_set))}
                   className="px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50 min-h-[44px]"
                 >
                   {embSaving ? "저장 중..." : "💾 임베딩 설정 저장"}
@@ -499,20 +499,20 @@ export default function SettingsPage() {
                 {/* API 키 인라인 편집 */}
                 {editingKeyId === p.id && (
                   <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
-                    <label className="block text-sm font-medium mb-1.5">API 키</label>
+                    <label className="block text-sm font-medium mb-1.5">API 키 환경변수명</label>
                     <div className="flex gap-2">
                       <input
-                        type="password"
-                        value={editApiKey}
-                        onChange={(e) => setEditApiKey(e.target.value)}
-                        placeholder={p.api_key ? "•••••••• (기존 키 있음)" : "API 키를 입력하세요 (빈값 → 환경변수 자동 로드)"}
+                        type="text"
+                        value={editApiKeyEnvVar}
+                        onChange={(e) => setEditApiKeyEnvVar(e.target.value)}
+                        placeholder={p.api_key_status?.is_set ? `설정됨 (${p.api_key_status.masked}) — 변경하려면 새 환경변수명 입력` : "환경변수명 입력 (예: OLLAMA_CLOUD_API_KEY)"}
                         className="flex-1 px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
                       />
                       <button
                         onClick={async () => {
-                          await updateLLMProvider(p.id, { api_key: editApiKey || undefined });
+                          await updateLLMProvider(p.id, { api_key_env_var: editApiKeyEnvVar || undefined });
                           setEditingKeyId(null);
-                          setEditApiKey("");
+                          setEditApiKeyEnvVar("");
                           // 설정 다시 로드
                           const [llmRes] = await Promise.all([listLLMProviders()]);
                           setProviders(llmRes.providers);
@@ -522,7 +522,7 @@ export default function SettingsPage() {
                         저장
                       </button>
                       <button
-                        onClick={() => { setEditingKeyId(null); setEditApiKey(""); }}
+                        onClick={() => { setEditingKeyId(null); setEditApiKeyEnvVar(""); }}
                         className="px-3 py-2.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 min-h-[44px] shrink-0"
                       >
                         취소
@@ -572,12 +572,12 @@ export default function SettingsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1.5">API 키</label>
+                <label className="block text-sm font-medium mb-1.5">API 키 환경변수명</label>
                 <input
-                  type="password"
-                  value={newApiKey}
-                  onChange={(e) => setNewApiKey(e.target.value)}
-                  placeholder="필요한 경우에만 입력"
+                  type="text"
+                  value={newApiKeyEnvVar}
+                  onChange={(e) => setNewApiKeyEnvVar(e.target.value)}
+                  placeholder="예: OPENAI_API_KEY (빈값 → 기본 환경변수)"
                   className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
                 />
               </div>
@@ -637,12 +637,12 @@ export default function SettingsPage() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium mb-1.5">API 키 (선택)</label>
+              <label className="block text-sm font-medium mb-1.5">API 키 환경변수명 (선택)</label>
               <input
-                type="password"
-                value={testApiKey}
-                onChange={(e) => setTestApiKey(e.target.value)}
-                placeholder="환경변수에 설정된 경우 생략"
+                type="text"
+                value={testApiKeyEnvVar}
+                onChange={(e) => setTestApiKeyEnvVar(e.target.value)}
+                placeholder="예: OLLAMA_CLOUD_API_KEY (빈값 → 기본 환경변수)"
                 className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
               />
             </div>

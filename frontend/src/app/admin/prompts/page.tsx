@@ -22,6 +22,7 @@ const MODES: { key: PromptMode; label: string; icon: string; desc: string }[] = 
   { key: "summary", label: "요약", icon: "📋", desc: "문서 종합 요약" },
   { key: "column", label: "컬럼", icon: "✍️", desc: "종합 글 작성" },
   { key: "reasoning", label: "추론", icon: "🧠", desc: "문서 교차 분석" },
+  { key: "creative", label: "창의", icon: "💡", desc: "자유로운 대화" },
 ];
 
 // ── 변수 삽입 도우미 ───────────────────────────────────────────────────

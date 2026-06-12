@@ -20,6 +20,7 @@ const modes: { key: ChatMode; label: string }[] = [
   { key: "summary", label: "요약" },
   { key: "column", label: "컬럼 작성" },
   { key: "reasoning", label: "추론" },
+  { key: "creative", label: "창의적 대화" },
 ];
 
 const strengths: { key: ReasoningStrength; label: string }[] = [

@@ -1,0 +1,12 @@
+{
+  "default": {
+    "id": "default",
+    "name": "기본 워크스페이스",
+    "description": "모든 문서가 포함된 기본 워크스페이스",
+    "system_prompt": "",
+    "vector_collection": "mai_brain_documents",
+    "document_ids": [],
+    "created_at": "2026-06-09T08:53:26.158479+00:00",
+    "updated_at": "2026-06-09T08:53:26.158665+00:00"
+  }
+}
