@@ -966,3 +966,118 @@ export async function listAgentTools(): Promise<AgentToolInfo[]> {
 // detects it and returns AgentResponse instead of ChatResponse.
 
 
+// ── API 키 관리 ────────────────────────────────────────────────────────────
+
+export interface ApiKeyCreateRequest {
+  name: string;
+  description?: string;
+  rate_limit?: number;
+}
+
+export interface ApiKeyResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  key_prefix: string;
+  rate_limit: number;
+  is_active: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  usage_count: number;
+}
+
+export interface ApiKeyCreateResponse extends ApiKeyResponse {
+  api_key: string; // 평문 키 — 생성 시 1회만 노출
+}
+
+export async function listApiKeys(): Promise<ApiKeyResponse[]> {
+  return fetchAPI<ApiKeyResponse[]>("/api/api-keys");
+}
+
+export async function createApiKey(req: ApiKeyCreateRequest): Promise<ApiKeyCreateResponse> {
+  return fetchAPI<ApiKeyCreateResponse>("/api/api-keys", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export async function getApiKey(keyId: string): Promise<ApiKeyResponse> {
+  return fetchAPI<ApiKeyResponse>(`/api/api-keys/${keyId}`);
+}
+
+export async function rotateApiKey(keyId: string): Promise<ApiKeyCreateResponse> {
+  return fetchAPI<ApiKeyCreateResponse>(`/api/api-keys/${keyId}/rotate`, {
+    method: "POST",
+  });
+}
+
+export async function deactivateApiKey(keyId: string): Promise<ApiKeyResponse> {
+  return fetchAPI<ApiKeyResponse>(`/api/api-keys/${keyId}/deactivate`, {
+    method: "POST",
+  });
+}
+
+export async function deleteApiKey(keyId: string): Promise<{ ok: boolean; message: string }> {
+  return fetchAPI(`/api/api-keys/${keyId}`, { method: "DELETE" });
+}
+
+
+// ── 외부용 v1 챗 API 클라이언트 ──────────────────────────────────────────────
+
+export interface V1ChatRequest {
+  question: string;
+  mode: ChatMode;
+  session_id?: string;
+  reasoning_strength?: ReasoningStrength;
+  workspace_id?: string;
+}
+
+export interface V1ChatResponse {
+  answer: string;
+  sources: Array<{ source: string; text: string; score: number; page?: number }> | null;
+  mode: string;
+  session_id: string;
+}
+
+/** 외부용 v1 채팅 API — apiKey를 직접 전달하여 X-API-Key 헤더로 인증 */
+export async function v1ChatApi(
+  req: V1ChatRequest,
+  apiKey: string,
+  baseUrl: string = "",
+): Promise<V1ChatResponse> {
+  const url = `${baseUrl || ""}/api/v1/chat`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-API-Key": apiKey,
+    },
+    body: JSON.stringify(req),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`v1 API 오류 (${res.status}): ${detail}`);
+  }
+
+  return res.json();
+}
+
+/** 외부용 v1 모드 목록 */
+export async function v1ListModes(
+  apiKey: string,
+  baseUrl: string = "",
+): Promise<{ modes: Array<{ key: string; label: string }> }> {
+  const url = `${baseUrl || ""}/api/v1/modes`;
+  const res = await fetch(url, {
+    headers: { "X-API-Key": apiKey },
+  });
+
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`v1 모드 목록 오류 (${res.status}): ${detail}`);
+  }
+
+  return res.json();
+}
+

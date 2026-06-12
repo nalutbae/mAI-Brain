@@ -17,6 +17,7 @@ data/backups/
 data/uploads/
 data/qdrant_storage/
 data/provider_settings.json
+data/api_keys.json
 qdrant_storage/
 logs/
 *.db

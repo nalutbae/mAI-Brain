@@ -9,6 +9,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from scalar_fastapi import get_scalar_api_reference
 
 from app.config import get_settings
 
@@ -98,8 +99,20 @@ async def root():
         "app": settings.app_name,
         "version": "0.2.0",
         "docs": "/docs",
+        "scalar": "/scalar",
         "health": "/health",
     }
+
+
+# ── Scalar API 문서 ──────────────────────────────────────────────────────
+
+@app.get("/scalar", include_in_schema=False)
+async def scalar_html():
+    """Scalar API 문서 UI (Swagger UI 대신 모던한 인터페이스)."""
+    return get_scalar_api_reference(
+        openapi_url=app.openapi_url,
+        title=f"{settings.app_name} — API 문서",
+    )
 
 
 # ── 라우터 등록 ───────────────────────────────────────────────────────────
@@ -128,3 +141,11 @@ app.include_router(settings_api.router, prefix="/api/settings", tags=["settings"
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(widget.router, prefix="/api/widget", tags=["widget"])
 app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])
+
+# ── API 키 관리 (관리자용) ──────────────────────────────────────────────────
+from app.api import api_keys
+app.include_router(api_keys.router, prefix="/api/api-keys", tags=["api-keys"])
+
+# ── 외부용 OpenAPI v1 (X-API-Key 인증 필요) ────────────────────────────────
+from app.api import v1
+app.include_router(v1.router, prefix="/api/v1", tags=["v1"])
