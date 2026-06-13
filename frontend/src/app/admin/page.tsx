@@ -6,6 +6,7 @@ import {
   getDocuments,
   uploadMultipleDocuments,
   deleteDocument,
+  uploadUrl,
 } from "../../lib/api";
 import { AdminGuard } from "../../components/AuthGuard";
 
@@ -40,11 +41,19 @@ function UploadZone({
   onFilesChange,
   uploading,
   onUpload,
+  urlInput,
+  onUrlInputChange,
+  onUrlUpload,
+  urlUploading,
 }: {
   files: File[];
   onFilesChange: (files: File[]) => void;
   uploading: boolean;
   onUpload: () => void;
+  urlInput: string;
+  onUrlInputChange: (value: string) => void;
+  onUrlUpload: () => void;
+  urlUploading: boolean;
 }) {
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -82,7 +91,7 @@ function UploadZone({
       if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
         const validFiles = Array.from(e.dataTransfer.files).filter((f) => {
           const ext = f.name.split(".").pop()?.toLowerCase();
-          return ext && ["pdf", "epub", "txt"].includes(ext);
+          return ext && ["pdf", "epub", "txt", "md", "markdown", "docx", "doc", "hwp", "xlsx", "xls", "csv"].includes(ext);
         });
         onFilesChange(validFiles);
       }
@@ -128,7 +137,7 @@ function UploadZone({
           ref={fileInputRef}
           type="file"
           multiple
-          accept=".pdf,.epub,.txt"
+          accept=".pdf,.epub,.txt,.md,.markdown,.docx,.doc,.hwp,.xlsx,.xls,.csv"
           onChange={handleFileSelect}
           className="hidden"
         />
@@ -152,7 +161,37 @@ function UploadZone({
           또는 여기로 파일을 드래그하세요
         </p>
         <p className="text-xs text-gray-500 mt-1">
-          PDF, EPUB, TXT 파일 지원
+          PDF, EPUB, TXT, DOCX, DOC, HWP, XLSX, XLS, CSV, MD 파일 지원
+        </p>
+      </div>
+
+      {/* ── URL 웹페이지 인덱싱 ──────────────────────────────── */}
+      <div className="mt-4 p-4 border border-blue-200 dark:border-blue-800 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-lg">🌐</span>
+          <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">URL 웹페이지 인덱싱</h3>
+        </div>
+        <div className="flex gap-2">
+          <input
+            type="url"
+            placeholder="https://example.com/article"
+            value={urlInput}
+            onChange={(e) => onUrlInputChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && urlInput.trim()) onUrlUpload();
+            }}
+            className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          />
+          <button
+            onClick={onUrlUpload}
+            disabled={!urlInput.trim() || urlUploading}
+            className="px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
+          >
+            {urlUploading ? "인덱싱 중..." : "인덱싱"}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 mt-1">
+          웹페이지 본문을 자동 추출하여 인덱싱합니다 (readability 기반)
         </p>
       </div>
 
@@ -310,6 +349,8 @@ function AdminContent() {
   const [uploading, setUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [urlInput, setUrlInput] = useState("");
+  const [urlUploading, setUrlUploading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // 문서 목록 불러오기
@@ -359,6 +400,24 @@ function AdminContent() {
     }
   };
 
+  // URL 웹페이지 업로드
+  const handleUrlUpload = async () => {
+    if (!urlInput.trim()) return;
+    setUrlUploading(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      await uploadUrl(urlInput.trim());
+      setSuccessMsg("URL 웹페이지 인덱싱이 시작되었습니다.");
+      setUrlInput("");
+      loadDocuments();
+    } catch (e: any) {
+      setError(e.message || "URL 인덱싱 중 오류가 발생했습니다.");
+    } finally {
+      setUrlUploading(false);
+    }
+  };
+
   // 문서 삭제
   const handleDelete = async (id: string) => {
     if (!confirm("정말 삭제하시겠습니까?")) return;
@@ -388,7 +447,7 @@ function AdminContent() {
           📚 문서 관리
         </h1>
         <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-          PDF, EPUB, TXT 파일을 업로드하고 관리합니다
+          PDF, EPUB, TXT, DOCX, DOC, HWP, XLSX, XLS, CSV, MD 파일을 업로드하고 관리합니다
         </p>
       </header>
 
@@ -416,6 +475,10 @@ function AdminContent() {
             onFilesChange={setFiles}
             uploading={uploading}
             onUpload={handleUpload}
+            urlInput={urlInput}
+            onUrlInputChange={setUrlInput}
+            onUrlUpload={handleUrlUpload}
+            urlUploading={urlUploading}
           />
         </section>
 

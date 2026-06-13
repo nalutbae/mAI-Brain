@@ -186,7 +186,7 @@ async def upload_document(
     if suffix not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
-            detail=f"지원하지 않는 파일 형식: {suffix} (PDF, EPUB, TXT만 지원)",
+            detail=f"지원하지 않는 파일 형식: {suffix} (PDF, EPUB, TXT, DOCX, DOC, HWP, XLSX, XLS, CSV, MD 지원)",
         )
 
     if not file.size or file.size == 0:
@@ -374,3 +374,76 @@ async def delete_document(document_id: str):
     # indexer에서 delete_document 함수 구현 후 호출
 
     return {"message": "문서가 삭제되었습니다.", "document_id": document_id}
+
+
+# --------------------------------------------------------------------------- #
+# URL 웹페이지 인덱싱
+# --------------------------------------------------------------------------- #
+
+@router.post("/upload-url", response_model=DocumentUploadResponse)
+async def upload_url(url: str):
+    """URL 웹페이지를 다운로드하여 인덱싱합니다.
+
+    웹페이지의 본문 텍스트를 추출하여 Qdrant에 저장합니다.
+    readability 라이브러리로 광고/네비게이션을 제거하고 본문만 추출합니다.
+    """
+    # URL 형식 검증
+    from urllib.parse import urlparse
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"지원하지 않는 URL 스킴: {parsed.scheme} (http, https만 지원)",
+        )
+
+    # 웹페이지 텍스트 추출
+    from app.ingestion.parser import extract_url
+    try:
+        result = extract_url(url)
+    except ImportError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=422,
+            detail=f"URL에서 텍스트를 추출할 수 없습니다: {e}",
+        )
+
+    if not result.text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail=f"URL에서 텍스트를 추출할 수 없습니다: {url}",
+        )
+
+    # 텍스트를 임시 파일로 저장 후 인덱싱
+    import tempfile
+    import os
+
+    # URL에서 파일명 생성
+    domain = parsed.netloc.replace(".", "_").replace(":", "_")
+    path_part = parsed.path.strip("/").replace("/", "_")[:50] or "index"
+    safe_filename = f"{domain}_{path_part}.txt"
+
+    upload_dir = _get_upload_dir()
+    saved_path = upload_dir / safe_filename
+
+    # 동일 파일이 있으면 덮어쓰기
+    saved_path.write_text(result.text, encoding="utf-8")
+
+    # document_id 생성
+    from app.ingestion.indexer import _generate_document_id
+    document_id = _generate_document_id(safe_filename)
+
+    # 트래커에 상태 등록
+    tracker = get_tracker()
+    tracker.start(document_id, safe_filename)
+
+    # 스레드풀에서 인덱싱 실행
+    loop = asyncio.get_running_loop()
+    loop.run_in_executor(_indexing_executor, _run_indexing, str(saved_path))
+
+    return DocumentUploadResponse(
+        document_id=document_id,
+        filename=safe_filename,
+        status=IndexingStatus.INDEXING,
+        message=f"URL 웹페이지가 다운로드되었으며 인덱싱이 시작되었습니다.",
+    )

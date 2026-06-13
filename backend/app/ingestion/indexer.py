@@ -30,7 +30,13 @@ from app.models.document import IndexResult, IndexingStatus
 logger = logging.getLogger(__name__)
 
 # 지원 파일 확장자
-SUPPORTED_EXTENSIONS = {".pdf", ".epub", ".txt"}
+SUPPORTED_EXTENSIONS = {
+    ".pdf", ".epub", ".txt", ".md", ".markdown",
+    ".docx", ".doc",
+    ".hwp",
+    ".xlsx", ".xls",
+    ".csv",
+}
 
 
 # ---------------------------------------------------------------------------

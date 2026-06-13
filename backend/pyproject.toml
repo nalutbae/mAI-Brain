@@ -33,6 +33,13 @@ ocr = [
     "camelot-py[csv]>=0.11.0",
     "img2table>=1.2.0",
 ]
+doc-parsers = [
+    "python-docx>=1.1.0",
+    "olefile>=0.47",
+    "openpyxl>=3.1.0",
+    "xlrd>=2.0.0",
+    "readability-lxml>=0.8.0",
+]
 api-embedding = [
     "cohere>=5.0.0",
 ]

@@ -231,6 +231,15 @@ export async function uploadDocument(file: File): Promise<Document> {
 }
 
 /**
+ * URL 웹페이지를 다운로드하여 인덱싱
+ */
+export async function uploadUrl(url: string): Promise<Document> {
+  return fetchAPI(`/api/documents/upload-url?url=${encodeURIComponent(url)}`, {
+    method: "POST",
+  });
+}
+
+/**
  * 여러 파일을 한 번에 업로드 (배치)
  */
 export async function uploadMultipleDocuments(files: File[]): Promise<Document[]> {
