@@ -122,6 +122,7 @@ app.include_router(documents.router, prefix="/api/documents", tags=["documents"]
 
 from app.api import (
     chat,
+    chat_stream,
     chunking,
     cross_reasoning,
     evaluation,
@@ -133,6 +134,7 @@ from app.api import (
     workspace,
 )
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(chat_stream.router, prefix="/api/chat/stream", tags=["chat-stream"])
 app.include_router(chunking.router, prefix="/api/chunking", tags=["chunking"])
 app.include_router(cross_reasoning.router, prefix="/api/cross-reasoning", tags=["cross-reasoning"])
 app.include_router(evaluation.router, prefix="/api/evaluation", tags=["evaluation"])

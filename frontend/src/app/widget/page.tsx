@@ -39,6 +39,7 @@ interface TokenResponse {
 interface Message {
   role: "user" | "assistant";
   content: string;
+  isStreaming?: boolean;
 }
 
 // nginx 프록시 모드에서는 빈 문자열(상대 경로) 사용
@@ -57,6 +58,94 @@ async function fetchToken(
   return res.json();
 }
 
+/**
+ * SSE 스트리밍 채팅 (위젯용).
+ * 메인 ChatInterface와 동일한 SSE 프로토콜 사용.
+ */
+async function sendChatStream(
+  question: string,
+  token: string,
+  mode: string = "fact",
+  callbacks: {
+    onToken: (token: string) => void;
+    onDone: () => void;
+    onError: (error: string) => void;
+  }
+): Promise<void> {
+  const url = `${API_BASE}/api/chat/stream`;
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ question, mode }),
+    });
+  } catch (err) {
+    callbacks.onError(err instanceof Error ? err.message : "네트워크 오류");
+    return;
+  }
+
+  if (!response.ok) {
+    callbacks.onError(`API 오류: ${response.status}`);
+    return;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    callbacks.onError("응답 스트림을 읽을 수 없습니다.");
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const eventStr of events) {
+        if (!eventStr.trim()) continue;
+        let eventType = "";
+        let eventData = "";
+        for (const line of eventStr.split("\n")) {
+          if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+          else if (line.startsWith("data: ")) eventData = line.slice(6);
+        }
+        if (!eventType || !eventData) continue;
+        try {
+          const data = JSON.parse(eventData);
+          switch (eventType) {
+            case "token":
+              if (data.content) callbacks.onToken(data.content);
+              break;
+            case "done":
+              callbacks.onDone();
+              break;
+            case "error":
+              callbacks.onError(data.error || "알 수 없는 오류");
+              break;
+          }
+        } catch { /* ignore parse errors */ }
+      }
+    }
+  } catch (err) {
+    callbacks.onError(err instanceof Error ? err.message : "스트리밍 오류");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+/** 폴백: 일반 채팅 API (스트리밍 실패 시) */
 async function sendChat(
   question: string,
   token: string,
@@ -80,9 +169,11 @@ export default function WidgetPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const streamAbortRef = useRef<boolean>(false);
 
   const getWidgetId = useCallback(() => {
     if (typeof window === "undefined") return "default";
@@ -106,26 +197,102 @@ export default function WidgetPage() {
   }, [messages]);
 
   const handleSend = useCallback(async () => {
-    if (!input.trim() || isLoading || !token) return;
+    if (!input.trim() || isLoading || isStreaming || !token) return;
     const userMsg: Message = { role: "user", content: input.trim() };
-    setMessages((prev) => [...prev, userMsg]);
+    const emptyAiMsg: Message = { role: "assistant", content: "", isStreaming: true };
+
+    setMessages((prev) => [...prev, userMsg, emptyAiMsg]);
     setInput("");
     setIsLoading(true);
+    setIsStreaming(true);
+    streamAbortRef.current = false;
+
+    const streamIndex = messages.length + 1;
+    let fullAnswer = "";
+
     try {
-      const response = await sendChat(userMsg.content, token);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: response.answer },
-      ]);
+      await sendChatStream(input.trim(), token, "fact", {
+        onToken: (chunk: string) => {
+          fullAnswer += chunk;
+          setMessages((prev) => {
+            const updated = [...prev];
+            updated[streamIndex] = {
+              ...updated[streamIndex],
+              content: fullAnswer,
+              isStreaming: true,
+            };
+            return updated;
+          });
+        },
+        onDone: () => {
+          setMessages((prev) => {
+            const updated = [...prev];
+            updated[streamIndex] = {
+              ...updated[streamIndex],
+              isStreaming: false,
+            };
+            return updated;
+          });
+          setIsLoading(false);
+          setIsStreaming(false);
+        },
+        onError: (errMsg: string) => {
+          // 스트리밍 오류 → 폴백
+          if (fullAnswer) {
+            // 일부 응답 이미 수신됨 → 오류 메시지만 추가
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[streamIndex] = {
+                ...updated[streamIndex],
+                content: fullAnswer + `\n\n⚠️ ${errMsg}`,
+                isStreaming: false,
+              };
+              return updated;
+            });
+            setIsLoading(false);
+            setIsStreaming(false);
+          } else {
+            // 전혀 수신 못함 → 일반 API 폴백
+            fallbackToNormalChat(input.trim(), token, streamIndex);
+          }
+        },
+      });
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "죄송합니다. 응답 생성 중 오류가 발생했습니다." },
-      ]);
+      fallbackToNormalChat(input.trim(), token, streamIndex);
+    }
+  }, [input, isLoading, isStreaming, token, messages.length]);
+
+  const fallbackToNormalChat = useCallback(async (
+    question: string,
+    authToken: string,
+    streamIndex: number,
+  ) => {
+    try {
+      const response = await sendChat(question, authToken);
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[streamIndex] = {
+          role: "assistant",
+          content: response.answer,
+          isStreaming: false,
+        };
+        return updated;
+      });
+    } catch {
+      setMessages((prev) => {
+        const updated = [...prev];
+        updated[streamIndex] = {
+          role: "assistant",
+          content: "죄송합니다. 응답 생성 중 오류가 발생했습니다.",
+          isStreaming: false,
+        };
+        return updated;
+      });
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
     }
-  }, [input, isLoading, token]);
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -249,11 +416,19 @@ export default function WidgetPage() {
                       ? t.user_bubble_text_color : t.assistant_bubble_text_color,
                   }}>
                     {msg.content}
+                    {msg.isStreaming && (
+                      <span style={{
+                        display: "inline-block", width: "6px", height: "14px",
+                        marginLeft: "2px", background: "currentColor", opacity: 0.6,
+                        borderRadius: "1px", animation: "blink 0.8s infinite",
+                        verticalAlign: "text-bottom",
+                      }} />
+                    )}
                   </div>
                 </div>
               ))
             )}
-            {isLoading && (
+            {isLoading && !isStreaming && messages[messages.length - 1]?.role !== "assistant" && (
               <div style={{ display: "flex", justifyContent: "flex-start" }}>
                 <div style={{
                   padding: "10px 16px", borderRadius: t.border_radius,
@@ -289,22 +464,23 @@ export default function WidgetPage() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder={config.placeholder}
-                disabled={isLoading}
+                placeholder={isStreaming ? "응답 생성 중..." : config.placeholder}
+                disabled={isLoading || isStreaming}
                 style={{
                   flex: 1, padding: "10px 16px", borderRadius: "24px",
                   border: `1px solid ${bc}`, fontSize: "14px",
                   outline: "none", background: bg, color: txt,
                   fontFamily: "inherit",
+                  opacity: isLoading || isStreaming ? 0.6 : 1,
                 }}
               />
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || isLoading}
+                disabled={!input.trim() || isLoading || isStreaming}
                 style={{
                   padding: "10px 16px", borderRadius: "24px", border: "none",
                   cursor: "pointer", background: t.primary_color, color: "#fff",
-                  opacity: !input.trim() || isLoading ? 0.5 : 1,
+                  opacity: !input.trim() || isLoading || isStreaming ? 0.5 : 1,
                   fontFamily: "inherit",
                 }}
               >
@@ -319,6 +495,18 @@ export default function WidgetPage() {
           </div>
         </>
       )}
+
+      {/* CSS 애니메이션 인라인 주입 */}
+      <style>{`
+        @keyframes bounce {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-6px); }
+        }
+        @keyframes blink {
+          0%, 100% { opacity: 0.2; }
+          50% { opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }

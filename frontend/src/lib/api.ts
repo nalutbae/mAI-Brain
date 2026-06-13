@@ -66,6 +66,128 @@ export async function chatApi(request: ChatRequest): Promise<ChatResponse> {
   });
 }
 
+// ── 채팅 스트리밍 ────────────────────────────────────────────────────────
+
+export interface StreamCallbacks {
+  /** 토큰 조각 수신 시 호출 */
+  onToken: (token: string) => void;
+  /** 검색 출처 수신 시 호출 */
+  onSources?: (sources: Array<{ source: string; text: string; score: number; page?: number }>) => void;
+  /** 에이전트 스텝 수신 시 호출 */
+  onSteps?: (steps: Array<{ type: string; content: string; tool_name?: string }>) => void;
+  /** 스트리밍 완료 시 호출 (session_id 포함) */
+  onDone: (sessionId: string) => void;
+  /** 오류 발생 시 호출 */
+  onError: (error: string) => void;
+}
+
+/**
+ * SSE 스트리밍 채팅 API.
+ * fetch + ReadableStream을 사용하여 서버에서 토큰을 점진적으로 수신한다.
+ * EventSource 대신 fetch를 사용하는 이유: POST 요청 지원 + 커스텀 헤더.
+ */
+export async function chatStreamApi(
+  request: ChatRequest,
+  callbacks: StreamCallbacks
+): Promise<void> {
+  const url = `${API_BASE_URL}/api/chat/stream`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+      },
+      body: JSON.stringify(request),
+    });
+  } catch (err) {
+    callbacks.onError(err instanceof Error ? err.message : "네트워크 오류가 발생했습니다.");
+    return;
+  }
+
+  if (!response.ok) {
+    callbacks.onError(`API 오류: ${response.status} ${response.statusText}`);
+    return;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    callbacks.onError("응답 스트림을 읽을 수 없습니다.");
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE는 빈 줄(\n\n)로 이벤트를 구분
+      const events = buffer.split("\n\n");
+      // 마지막 조각은 완전하지 않을 수 있으므로 버퍼에 유지
+      buffer = events.pop() || "";
+
+      for (const eventStr of events) {
+        if (!eventStr.trim()) continue;
+
+        let eventType = "";
+        let eventData = "";
+
+        for (const line of eventStr.split("\n")) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            eventData = line.slice(6);
+          }
+        }
+
+        if (!eventType || !eventData) continue;
+
+        try {
+          const data = JSON.parse(eventData);
+
+          switch (eventType) {
+            case "token":
+              if (data.content) {
+                callbacks.onToken(data.content);
+              }
+              break;
+            case "sources":
+              if (callbacks.onSources && data.sources) {
+                callbacks.onSources(data.sources);
+              }
+              break;
+            case "steps":
+              if (callbacks.onSteps && data.steps) {
+                callbacks.onSteps(data.steps);
+              }
+              break;
+            case "done":
+              callbacks.onDone(data.session_id || request.session_id || "");
+              break;
+            case "error":
+              callbacks.onError(data.error || "알 수 없는 오류가 발생했습니다.");
+              break;
+          }
+        } catch {
+          // JSON 파싱 실패 — 무시
+        }
+      }
+    }
+  } catch (err) {
+    callbacks.onError(err instanceof Error ? err.message : "스트리밍 중 오류가 발생했습니다.");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 // ── 문서 관리 ─────────────────────────────────────────────────────────────
 
 export interface Document {

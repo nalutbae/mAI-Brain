@@ -18,6 +18,7 @@ interface MessageBubbleProps {
   message: Message;
   sessionId?: string;
   messageIndex?: number;
+  isStreaming?: boolean;
 }
 
 const FEEDBACK_TAGS: { value: FeedbackTag; label: string }[] = [
@@ -30,7 +31,7 @@ const FEEDBACK_TAGS: { value: FeedbackTag; label: string }[] = [
   { value: "unclear", label: "불분명" },
 ];
 
-export default function MessageBubble({ message, sessionId, messageIndex }: MessageBubbleProps) {
+export default function MessageBubble({ message, sessionId, messageIndex, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === "user";
   const [feedbackGiven, setFeedbackGiven] = useState<FeedbackType | null>(null);
   const [showTags, setShowTags] = useState(false);
@@ -103,15 +104,20 @@ export default function MessageBubble({ message, sessionId, messageIndex }: Mess
             : "bg-gray-200 text-gray-800 rounded-bl-none"
         }`}
       >
-        <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+        <p className="text-sm whitespace-pre-wrap">
+          {message.content || (isStreaming ? "" : "")}
+          {isStreaming && (
+            <span className="inline-block w-1.5 h-4 ml-0.5 bg-gray-600 dark:bg-gray-300 animate-pulse align-text-bottom rounded-sm" />
+          )}
+        </p>
         {message.sources && message.sources.length > 0 && (
           <div className="mt-2 pt-2 border-t border-black/10 text-xs text-gray-600 dark:text-gray-300">
             <span className="font-medium">출처:</span> {message.sources.join(", ")}
           </div>
         )}
 
-        {/* 👍👎 피드백 버튼 — AI 메시지에만 표시 */}
-        {!isUser && !feedbackGiven && (
+        {/* 👍👎 피드백 버튼 — AI 메시지에만 표시, 스트리밍 중에는 숨김 */}
+        {!isUser && !feedbackGiven && !isStreaming && (
           <div className="mt-2 pt-2 border-t border-black/10 flex gap-2">
             <button
               onClick={handleThumbsUp}

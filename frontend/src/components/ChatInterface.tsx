@@ -10,7 +10,7 @@ import SourceDisplay from "./SourceDisplay";
 import AgentToolSelector from "./AgentToolSelector";
 import type { AgentToolInfo } from "../lib/api";
 import AgentResult from "./AgentResult";
-import { chatApi, getSession, submitFeedback, listAgentTools } from "../lib/api";
+import { chatApi, chatStreamApi, getSession, submitFeedback, listAgentTools } from "../lib/api";
 import type { FeedbackType as ApiFeedbackType, FeedbackTag as ApiFeedbackTag, FeedbackCreate } from "../lib/api";
 import type { AgentStep } from "../lib/api";
 import { analyzeCrossReasoning } from "../lib/cross-reasoning";
@@ -180,6 +180,8 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
     setInput("");
   };
 
+  const [isStreaming, setIsStreaming] = useState(false);
+
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -203,35 +205,122 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
     setInput("");
     setInterimTranscript("");
     setIsLoading(true);
+    setIsStreaming(true);
+
+    // 스트리밍 응답을 위한 빈 assistant 메시지 추가
+    const streamMessageIndex = messages.length + 1; // userMessage 다음 인덱스
+    const emptyAiMessage: Message = {
+      role: "assistant",
+      content: "",
+    };
+    setMessages((prev) => [...prev, emptyAiMessage]);
+
+    let fullAnswer = "";
+    let receivedSources: string[] | undefined;
 
     try {
-      const response = await chatApi({
-        question: userMessage.content,
-        mode,
-        session_id: sessionId,
-        ...((mode === "reasoning" || mode === "column") && { reasoning_strength: reasoningStrength }),
-      });
-
-      const aiMessage: Message = {
-        role: "assistant",
-        content: response.answer,
-        sources: mode === "creative" ? undefined : response.sources?.map((s) => s.source),
-      };
-
-      setMessages((prev) => [...prev, aiMessage]);
-
-      if (!sessionId && response.session_id && onSessionStart) {
-        onSessionStart(response.session_id);
-      }
+      await chatStreamApi(
+        {
+          question: userMessage.content,
+          mode,
+          session_id: sessionId,
+          ...((mode === "reasoning" || mode === "column") && { reasoning_strength: reasoningStrength }),
+        },
+        {
+          onToken: (token: string) => {
+            fullAnswer += token;
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[streamMessageIndex] = {
+                ...updated[streamMessageIndex],
+                role: "assistant",
+                content: fullAnswer,
+              };
+              return updated;
+            });
+          },
+          onSources: (sources) => {
+            receivedSources = sources.map((s) => s.source);
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[streamMessageIndex] = {
+                ...updated[streamMessageIndex],
+                sources: receivedSources,
+              };
+              return updated;
+            });
+          },
+          onDone: (newSessionId: string) => {
+            setIsLoading(false);
+            setIsStreaming(false);
+            if (!sessionId && newSessionId && onSessionStart) {
+              onSessionStart(newSessionId);
+            }
+          },
+          onError: (error: string) => {
+            console.error("Streaming error:", error);
+            setMessages((prev) => {
+              const updated = [...prev];
+              // 스트리밍 중 일부 응답이 이미 도착했을 수 있음
+              if (fullAnswer) {
+                updated[streamMessageIndex] = {
+                  ...updated[streamMessageIndex],
+                  content: fullAnswer + `\n\n⚠️ 스트리밍 오류: ${error}`,
+                };
+              } else {
+                updated[streamMessageIndex] = {
+                  role: "assistant",
+                  content: `메시지 전송 중 오류가 발생했습니다: ${error}`,
+                };
+              }
+              return updated;
+            });
+            setIsLoading(false);
+            setIsStreaming(false);
+          },
+        }
+      );
     } catch (error) {
       console.error("Failed to send message:", error);
-      const errorMessage: Message = {
-        role: "assistant",
-        content: "메시지 전송 중 오류가 발생했습니다.",
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      // 스트리밍 실패 → 폴백으로 일반 API 호출
+      setIsStreaming(false);
+      try {
+        const response = await chatApi({
+          question: userMessage.content,
+          mode,
+          session_id: sessionId,
+          ...((mode === "reasoning" || mode === "column") && { reasoning_strength: reasoningStrength }),
+        });
+
+        const aiMessage: Message = {
+          role: "assistant",
+          content: response.answer,
+          sources: mode === "creative" ? undefined : response.sources?.map((s) => s.source),
+        };
+
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[streamMessageIndex] = aiMessage;
+          return updated;
+        });
+
+        if (!sessionId && response.session_id && onSessionStart) {
+          onSessionStart(response.session_id);
+        }
+      } catch (fallbackError) {
+        console.error("Fallback API also failed:", fallbackError);
+        setMessages((prev) => {
+          const updated = [...prev];
+          updated[streamMessageIndex] = {
+            role: "assistant",
+            content: "메시지 전송 중 오류가 발생했습니다.",
+          };
+          return updated;
+        });
+      }
     } finally {
       setIsLoading(false);
+      setIsStreaming(false);
     }
   };
 
@@ -340,7 +429,12 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
         ) : (
           messages.map((message, index) => (
             <div key={index}>
-              <MessageBubble message={message} sessionId={sessionId} messageIndex={index} />
+              <MessageBubble
+                message={message}
+                sessionId={sessionId}
+                messageIndex={index}
+                isStreaming={isStreaming && index === messages.length - 1 && message.role === "assistant"}
+              />
               {message.sources && message.sources.length > 0 && (
                 <SourceDisplay
                   sources={message.sources}
@@ -460,7 +554,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
           <VoiceInput
             onTranscript={handleVoiceTranscript}
             onInterimTranscript={handleInterimTranscript}
-            disabled={isLoading}
+            disabled={isLoading || isStreaming}
           />
           <div className="flex-1 relative">
             <textarea
@@ -482,7 +576,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
                   : "border-gray-300 dark:border-gray-600"
               }`}
               rows={2}
-              disabled={isLoading}
+              disabled={isLoading || isStreaming}
             />
             {/* 음성 인식 중 표시 */}
             {interimTranscript && (
@@ -501,14 +595,14 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
           <div className="flex flex-col gap-2">
             <button
               onClick={handleSend}
-              disabled={!input.trim() || isLoading}
+              disabled={!input.trim() || isLoading || isStreaming}
               className={`px-6 py-3 text-white rounded-lg transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed ${
                 input.trim().startsWith(AGENT_TRIGGER)
                   ? "bg-indigo-600 hover:bg-indigo-700"
                   : "bg-blue-600 hover:bg-blue-700"
               }`}
             >
-              {isLoading ? "전송 중..." : input.trim().startsWith(AGENT_TRIGGER) ? "🤖 실행" : "전송"}
+              {isStreaming ? "스트리밍 중..." : isLoading ? "전송 중..." : input.trim().startsWith(AGENT_TRIGGER) ? "🤖 실행" : "전송"}
             </button>
             {messages.some((m) => m.role === "user") && (
               <button
