@@ -7,6 +7,9 @@ import {
   uploadMultipleDocuments,
   deleteDocument,
   uploadUrl,
+  reindexAllDocuments,
+  reindexDocument,
+  getDocumentDetail,
 } from "../../lib/api";
 import { AdminGuard } from "../../components/AuthGuard";
 
@@ -260,9 +263,15 @@ function UploadZone({
 function DocumentTable({
   documents,
   onDelete,
+  onReindex,
+  onViewDetail,
+  reindexingIds,
 }: {
   documents: Document[];
   onDelete: (id: string) => void;
+  onReindex: (id: string) => void;
+  onViewDetail: (id: string) => void;
+  reindexingIds: Set<string>;
 }) {
   return (
     <div className="overflow-x-auto">
@@ -297,7 +306,13 @@ function DocumentTable({
             documents.map((doc) => (
               <tr key={doc.document_id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
                 <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-200 max-w-[300px] truncate">
-                  {doc.filename}
+                  <button
+                    onClick={() => onViewDetail(doc.document_id)}
+                    className="hover:text-blue-600 dark:hover:text-blue-400 hover:underline text-left"
+                    title="상세 보기"
+                  >
+                    {doc.filename}
+                  </button>
                 </td>
                 <td className="px-4 py-3">
                   <StatusBadge status={doc.status} />
@@ -317,12 +332,21 @@ function DocumentTable({
                     : "-"}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <button
-                    onClick={() => onDelete(doc.document_id)}
-                    className="text-red-500 hover:text-red-700 dark:hover:text-red-400 text-sm font-medium transition-colors"
-                  >
-                    삭제
-                  </button>
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      onClick={() => onReindex(doc.document_id)}
+                      disabled={reindexingIds.has(doc.document_id)}
+                      className="text-amber-600 hover:text-amber-700 dark:hover:text-amber-400 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {reindexingIds.has(doc.document_id) ? "인덱싱 중..." : "재인덱스"}
+                    </button>
+                    <button
+                      onClick={() => onDelete(doc.document_id)}
+                      className="text-red-500 hover:text-red-700 dark:hover:text-red-400 text-sm font-medium transition-colors"
+                    >
+                      삭제
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))
@@ -352,6 +376,14 @@ function AdminContent() {
   const [urlInput, setUrlInput] = useState("");
   const [urlUploading, setUrlUploading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [reindexingAll, setReindexingAll] = useState(false);
+  const [reindexingIds, setReindexingIds] = useState<Set<string>>(new Set());
+  const [detailModal, setDetailModal] = useState<{ open: boolean; loading: boolean; data: Record<string, unknown> | null; error: string | null }>({
+    open: false,
+    loading: false,
+    data: null,
+    error: null,
+  });
 
   // 문서 목록 불러오기
   const loadDocuments = useCallback(async () => {
@@ -427,6 +459,53 @@ function AdminContent() {
       loadDocuments();
     } catch {
       setError("문서 삭제에 실패했습니다.");
+    }
+  };
+
+  // 전체 재인덱스
+  const handleReindexAll = async () => {
+    if (!confirm("모든 문서를 재인덱스하시겠습니까? 시간이 걸릴 수 있습니다.")) return;
+    setReindexingAll(true);
+    setError(null);
+    setSuccessMsg(null);
+    try {
+      const result = await reindexAllDocuments();
+      setSuccessMsg(`재인덱스 완료: ${result.reindexed}건 성공, ${result.failed}건 실패`);
+      loadDocuments();
+    } catch {
+      setError("전체 재인덱스에 실패했습니다.");
+    } finally {
+      setReindexingAll(false);
+    }
+  };
+
+  // 개별 재인덱스
+  const handleReindex = async (id: string) => {
+    setReindexingIds((prev) => new Set(prev).add(id));
+    setError(null);
+    try {
+      await reindexDocument(id);
+      setSuccessMsg("재인덱스가 시작되었습니다.");
+      loadDocuments();
+    } catch {
+      setError("재인덱스에 실패했습니다.");
+    } finally {
+      setReindexingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  // 문서 상세 보기
+  const handleViewDetail = async (id: string) => {
+    setDetailModal({ open: true, loading: true, data: null, error: null });
+    try {
+      const data = await getDocumentDetail(id);
+      setDetailModal({ open: true, loading: false, data, error: null });
+    } catch {
+      setDetailModal({ open: true, loading: false, data: null, error: "문서 상세 정보를 불러오는데 실패했습니다." });
     }
   };
 
@@ -514,21 +593,123 @@ function AdminContent() {
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
               문서 목록
             </h2>
-            <button
-              onClick={loadDocuments}
-              className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400"
-            >
-              ↻ 새로고침
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleReindexAll}
+                disabled={reindexingAll || documents.length === 0}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-lg bg-amber-50 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-700 hover:bg-amber-100 dark:hover:bg-amber-900/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {reindexingAll ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    재인덱스 중...
+                  </>
+                ) : (
+                  "전체 재인덱스"
+                )}
+              </button>
+              <button
+                onClick={loadDocuments}
+                className="text-sm text-blue-600 hover:text-blue-700 dark:text-blue-400"
+              >
+                ↻ 새로고침
+              </button>
+            </div>
           </div>
           {isLoading ? (
             <div className="p-12 text-center text-gray-500">
               로딩 중...
             </div>
           ) : (
-            <DocumentTable documents={documents} onDelete={handleDelete} />
+            <DocumentTable
+              documents={documents}
+              onDelete={handleDelete}
+              onReindex={handleReindex}
+              onViewDetail={handleViewDetail}
+              reindexingIds={reindexingIds}
+            />
           )}
         </section>
+
+        {/* 문서 상세 모달 */}
+        {detailModal.open && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+            onClick={() => setDetailModal((prev) => ({ ...prev, open: false }))}
+          >
+            <div
+              className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-lg w-full mx-4 max-h-[80vh] overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                  문서 상세 정보
+                </h3>
+                <button
+                  onClick={() => setDetailModal((prev) => ({ ...prev, open: false }))}
+                  className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <div className="px-6 py-4">
+                {detailModal.loading ? (
+                  <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+                    <svg className="animate-spin h-8 w-8 mx-auto mb-2 text-blue-500" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    불러오는 중...
+                  </div>
+                ) : detailModal.error ? (
+                  <div className="text-center py-8 text-red-600 dark:text-red-400">
+                    {detailModal.error}
+                  </div>
+                ) : detailModal.data ? (
+                  <dl className="space-y-3">
+                    {Object.entries(detailModal.data).map(([key, value]) => (
+                      <div key={key} className="flex flex-col sm:flex-row sm:items-start gap-1">
+                        <dt className="text-sm font-medium text-gray-500 dark:text-gray-400 sm:w-36 shrink-0">
+                          {key === "document_id" ? "문서 ID" :
+                           key === "filename" ? "파일명" :
+                           key === "status" ? "상태" :
+                           key === "total_chunks" ? "전체 청크" :
+                           key === "created_at" ? "생성 시간" :
+                           key === "updated_at" ? "수정 시간" :
+                           key === "file_size" ? "파일 크기" :
+                           key === "content_type" ? "콘텐츠 타입" :
+                           key === "error_message" ? "오류 메시지" :
+                           key === "metadata" ? "메타데이터" :
+                           key === "chunking_profile_id" ? "청킹 프로필" :
+                           key === "source_url" ? "원본 URL" :
+                           key}
+                        </dt>
+                        <dd className="text-sm text-gray-900 dark:text-gray-100 break-all">
+                          {key === "status" ? (
+                            <StatusBadge status={value as Document["status"]} />
+                          ) : key === "created_at" || key === "updated_at" ? (
+                            value ? new Date(value as string).toLocaleString("ko-KR") : "-"
+                          ) : key === "metadata" && typeof value === "object" && value !== null ? (
+                            <pre className="text-xs bg-gray-100 dark:bg-gray-900 p-2 rounded overflow-x-auto">
+                              {JSON.stringify(value, null, 2)}
+                            </pre>
+                          ) : (
+                            String(value ?? "-")
+                          )}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

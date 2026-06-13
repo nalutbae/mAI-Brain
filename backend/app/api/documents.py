@@ -351,6 +351,61 @@ async def reindex_all_documents() -> dict:
         "files": [f.name for f in sorted(supported_files)],
     }
 
+@router.post("/{document_id}/reindex")
+async def reindex_single_document(document_id: str):
+    """단일 문서 재인덱싱.
+
+    기존 Qdrant 포인트를 삭제하고 해당 파일을 다시 인덱싱합니다.
+    """
+    tracker = get_tracker()
+    state = tracker.get(document_id)
+
+    if state is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"문서를 찾을 수 없습니다: document_id={document_id}",
+        )
+
+    filename = state.get("filename", "")
+    upload_dir = _get_upload_dir()
+    file_path = upload_dir / filename
+
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"파일을 찾을 수 없습니다: {filename}",
+        )
+
+    # 기존 포인트 삭제 후 재인덱싱
+    vdb = get_vector_db()
+    vdb.delete_by_source(filename)
+
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        _indexing_executor, index_document, str(file_path)
+    )
+
+    return {
+        "message": f"문서 '{filename}' 재인덱싱이 완료되었습니다.",
+        "document_id": document_id,
+        "chunks": result.total_chunks if hasattr(result, "total_chunks") else 0,
+    }
+
+
+@router.get("/{document_id}")
+async def get_document_detail(document_id: str):
+    """문서 상세 정보 조회."""
+    tracker = get_tracker()
+    state = tracker.get(document_id)
+
+    if state is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"문서를 찾을 수 없습니다: document_id={document_id}",
+        )
+
+    return {"document_id": document_id, **state}
+
 
 @router.delete("/{document_id}")
 async def delete_document(document_id: str):

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from app.core.evaluator import get_evaluator
 from app.models.evaluation import (
@@ -118,3 +118,39 @@ async def get_evaluation_stats():
     """평가 통계 조회."""
     evaluator = get_evaluator()
     return evaluator.get_stats()
+
+
+@router.get("/results/export")
+async def export_evaluation_results(format: str = Query("json", description="내보내기 형식 (json, csv)")):
+    """평가 결과를 JSON 또는 CSV로 내보냅니다."""
+    import json as _json
+    from fastapi.responses import Response
+
+    evaluator = get_evaluator()
+    results = evaluator.result_store.list_all()
+
+    if format == "csv":
+        import csv as _csv
+        from io import StringIO
+
+        output = StringIO()
+        writer = _csv.writer(output)
+        writer.writerow(["eval_id", "qa_id", "question", "expected_answer", "actual_answer",
+                         "faithfulness", "answer_relevance", "hallucination_score", "precision_at_k", "recall_at_k", "mrr", "created_at"])
+        for run in results:
+            for qa in run.results:
+                writer.writerow([
+                    run.id, qa.qa_id, qa.question, qa.expected_answer,
+                    qa.actual_answer, qa.faithfulness, qa.answer_relevance,
+                    qa.hallucination_score, qa.precision_at_k, qa.recall_at_k,
+                    qa.mrr, run.created_at,
+                ])
+        return Response(content=output.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=evaluation_results.csv"})
+
+    # JSON 기본
+    return Response(
+        content=_json.dumps([r.model_dump() for r in results], ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=evaluation_results.json"},
+    )

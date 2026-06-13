@@ -281,6 +281,26 @@ export async function deleteDocument(id: string): Promise<{ message: string; doc
   return response.json();
 }
 
+// ── 문서 재인덱스 ──────────────────────────────────────────────────────────
+
+export interface ReindexResult {
+  reindexed: number;
+  failed: number;
+  details: Array<{ document_id: string; status: string }>;
+}
+
+export async function reindexAllDocuments(): Promise<ReindexResult> {
+  return fetchAPI("/api/documents/reindex-all", { method: "POST" });
+}
+
+export async function reindexDocument(id: string): Promise<{ message: string; document_id: string }> {
+  return fetchAPI(`/api/documents/${id}/reindex`, { method: "POST" });
+}
+
+export async function getDocumentDetail(id: string): Promise<Record<string, unknown>> {
+  return fetchAPI(`/api/documents/${id}`);
+}
+
 // ── 세션 관리 ─────────────────────────────────────────────────────────────
 
 export interface Session {
@@ -414,6 +434,26 @@ export async function createQAPair(data: QAPairCreate): Promise<QAPair> {
 
 export async function deleteQAPair(id: string): Promise<void> {
   await fetchAPI(`/api/evaluation/qa-pairs/${id}`, { method: "DELETE" });
+}
+
+export async function updateQAPair(
+  id: string,
+  data: { question?: string; expected_answer?: string; category?: string },
+): Promise<QAPair> {
+  return fetchAPI(`/api/evaluation/qa-pairs/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+}
+
+export async function exportEvaluationResults(format: string = "json"): Promise<Blob> {
+  const response = await fetch(
+    `${API_BASE_URL}/api/evaluation/results/export?format=${format}`,
+    { headers: { "Content-Type": "application/json" } },
+  );
+  if (!response.ok) throw new Error(`Export failed: ${response.status}`);
+  return response.blob();
 }
 
 // Evaluation
