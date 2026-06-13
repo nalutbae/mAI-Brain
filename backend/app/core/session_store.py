@@ -66,8 +66,18 @@ CREATE TABLE IF NOT EXISTS messages (
     FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS pinned_documents (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  TEXT NOT NULL,
+    document_id TEXT NOT NULL,
+    pinned_at   TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+    UNIQUE(session_id, document_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_pinned_documents_session ON pinned_documents(session_id);
 """
 
 
@@ -297,6 +307,144 @@ class SessionStore:
                 (session_id,),
             ).fetchone()
         return row["cnt"] if row else 0
+
+    # --------------------------------------------------------------- #
+    # 요약 메시지 관리
+    # --------------------------------------------------------------- #
+
+    def delete_summary_messages(self, session_id: str) -> int:
+        """세션의 기존 요약 메시지 삭제.
+
+        새 요약 생성 시 기존 요약을 대체하기 위해 사용.
+
+        Args:
+            session_id: 세션 ID
+
+        Returns:
+            삭제된 메시지 수
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """DELETE FROM messages
+                   WHERE session_id = ? AND role = 'system' AND mode = 'summary'""",
+                (session_id,),
+            )
+            deleted = cursor.rowcount
+        logger.info("세션 %s 요약 메시지 %d개 삭제", session_id[:8], deleted)
+        return deleted
+
+    # --------------------------------------------------------------- #
+    # 문서 고정 (Pin) 관리
+    # --------------------------------------------------------------- #
+
+    def pin_document(self, session_id: str, document_id: str) -> dict:
+        """문서를 세션에 고정.
+
+        이미 고정된 문서는 무시됩니다 (UNIQUE 제약조건).
+
+        Args:
+            session_id: 세션 ID
+            document_id: 문서 ID
+
+        Returns:
+            고정 정보 딕셔너리
+        """
+        now = datetime.now(timezone.utc).isoformat()
+
+        # 문서 제목(filename) 조회 시도
+        title = None
+        try:
+            from app.core.vectordb import get_vector_db
+            vdb = get_vector_db()
+            docs = vdb.list_documents()
+            for doc in docs:
+                if str(doc.get("document_id", "")) == document_id or doc.get("filename", "") == document_id:
+                    title = doc.get("filename", document_id)
+                    break
+        except Exception:
+            pass
+
+        with self._get_conn() as conn:
+            try:
+                conn.execute(
+                    """INSERT INTO pinned_documents (session_id, document_id, pinned_at)
+                       VALUES (?, ?, ?)""",
+                    (session_id, document_id, now),
+                )
+                logger.info("문서 고정: session=%s, doc=%s", session_id[:8], document_id[:8])
+            except Exception:
+                # 이미 고정된 문서 — 무시
+                logger.debug("이미 고정된 문서: session=%s, doc=%s", session_id[:8], document_id[:8])
+
+        return {
+            "session_id": session_id,
+            "document_id": document_id,
+            "pinned_at": now,
+            "title": title,
+        }
+
+    def unpin_document(self, session_id: str, document_id: str) -> bool:
+        """문서 고정 해제.
+
+        Args:
+            session_id: 세션 ID
+            document_id: 문서 ID
+
+        Returns:
+            해제 성공 여부
+        """
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                """DELETE FROM pinned_documents
+                   WHERE session_id = ? AND document_id = ?""",
+                (session_id, document_id),
+            )
+            success = cursor.rowcount > 0
+        if success:
+            logger.info("문서 고정 해제: session=%s, doc=%s", session_id[:8], document_id[:8])
+        return success
+
+    def get_pinned_documents(self, session_id: str) -> list[dict]:
+        """세션에 고정된 문서 목록 반환.
+
+        Args:
+            session_id: 세션 ID
+
+        Returns:
+            고정된 문서 정보 리스트
+        """
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                """SELECT document_id, pinned_at
+                   FROM pinned_documents
+                   WHERE session_id = ?
+                   ORDER BY pinned_at ASC""",
+                (session_id,),
+            ).fetchall()
+
+        result = []
+        for row in rows:
+            # 문서 제목(filename) 조회 시도
+            title = row["document_id"]
+            try:
+                from app.core.vectordb import get_vector_db
+                vdb = get_vector_db()
+                docs = vdb.list_documents()
+                for doc in docs:
+                    if str(doc.get("document_id", "")) == row["document_id"] or doc.get("filename", "") == row["document_id"]:
+                        title = doc.get("filename", row["document_id"])
+                        break
+            except Exception:
+                pass
+
+            result.append({
+                "session_id": session_id,
+                "document_id": row["document_id"],
+                "pinned_at": row["pinned_at"],
+                "title": title,
+            })
+
+        return result
 
 
 # --------------------------------------------------------------------------- #

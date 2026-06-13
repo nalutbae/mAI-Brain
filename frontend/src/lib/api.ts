@@ -551,6 +551,58 @@ export async function deleteSession(id: string): Promise<void> {
   }
 }
 
+// ── 컨텍스트 관리 (문서 고정, 대화 요약) ─────────────────────────────
+
+export interface PinnedDocument {
+  session_id: string;
+  document_id: string;
+  pinned_at: string;
+  title?: string;
+}
+
+export interface ContextSummary {
+  session_id: string;
+  summary_text: string;
+  message_count: number;
+  created_at: string;
+}
+
+/** 문서 고정 */
+export async function pinDocument(sessionId: string, documentId: string): Promise<PinnedDocument> {
+  return fetchAPI<PinnedDocument>("/api/context/pin", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, document_id: documentId }),
+  });
+}
+
+/** 문서 고정 해제 */
+export async function unpinDocument(sessionId: string, documentId: string): Promise<{ message: string }> {
+  return fetchAPI<{ message: string }>(`/api/context/pin/${sessionId}/${documentId}`, {
+    method: "DELETE",
+  });
+}
+
+/** 고정 문서 목록 조회 */
+export async function getPinnedDocuments(sessionId: string): Promise<PinnedDocument[]> {
+  return fetchAPI<PinnedDocument[]>(`/api/context/pins/${sessionId}`);
+}
+
+/** 대화 요약 트리거 */
+export async function summarizeHistory(sessionId: string, maxRecent: number = 10): Promise<{ session_id: string; summary: string; message_count: number }> {
+  return fetchAPI(`/api/context/summarize/${sessionId}?max_recent=${maxRecent}`, {
+    method: "POST",
+  });
+}
+
+/** 현재 요약 조회 */
+export async function getSummary(sessionId: string): Promise<ContextSummary | null> {
+  try {
+    return await fetchAPI<ContextSummary | null>(`/api/context/summary/${sessionId}`);
+  } catch {
+    return null;
+  }
+}
+
 // ── RAG 평가 ─────────────────────────────────────────────────────────────
 
 export interface QAPair {

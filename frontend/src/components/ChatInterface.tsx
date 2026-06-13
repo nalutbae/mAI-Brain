@@ -10,8 +10,8 @@ import SourceDisplay from "./SourceDisplay";
 import AgentToolSelector from "./AgentToolSelector";
 import type { AgentToolInfo } from "../lib/api";
 import AgentResult from "./AgentResult";
-import { chatApi, chatStreamApi, getSession, submitFeedback, listAgentTools } from "../lib/api";
-import type { FeedbackType as ApiFeedbackType, FeedbackTag as ApiFeedbackTag, FeedbackCreate } from "../lib/api";
+import { chatApi, chatStreamApi, getSession, submitFeedback, listAgentTools, getPinnedDocuments, unpinDocument as unpinDocumentApi, pinDocument as pinDocumentApi, getDocuments } from "../lib/api";
+import type { FeedbackType as ApiFeedbackType, FeedbackTag as ApiFeedbackTag, FeedbackCreate, PinnedDocument, Document } from "../lib/api";
 import type { AgentStep } from "../lib/api";
 import { analyzeCrossReasoning } from "../lib/cross-reasoning";
 import type { CrossReasoningReport } from "../lib/cross-reasoning";
@@ -61,14 +61,68 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
   const [showAgentTools, setShowAgentTools] = useState(false);
   const [agentToolsLoaded, setAgentToolsLoaded] = useState(false);
 
+  // Pinned documents state
+  const [pinnedDocs, setPinnedDocs] = useState<PinnedDocument[]>([]);
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [availableDocs, setAvailableDocs] = useState<Document[]>([]);
+  const [pinLoading, setPinLoading] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 세션이 변경될 때 메시지 로드
   useEffect(() => {
     if (sessionId) {
       loadSessionMessages(sessionId);
+      loadPinnedDocs(sessionId);
     }
   }, [sessionId]);
+
+  // 고정 문서 로드
+  const loadPinnedDocs = async (id: string) => {
+    try {
+      const docs = await getPinnedDocuments(id);
+      setPinnedDocs(docs);
+    } catch (error) {
+      console.error("Failed to load pinned docs:", error);
+    }
+  };
+
+  // 문서 고정
+  const handlePinDocument = async (documentId: string) => {
+    if (!sessionId) return;
+    setPinLoading(true);
+    try {
+      await pinDocumentApi(sessionId, documentId);
+      await loadPinnedDocs(sessionId);
+      setShowPinModal(false);
+    } catch (error) {
+      console.error("Failed to pin document:", error);
+    } finally {
+      setPinLoading(false);
+    }
+  };
+
+  // 문서 고정 해제
+  const handleUnpinDocument = async (documentId: string) => {
+    if (!sessionId) return;
+    try {
+      await unpinDocumentApi(sessionId, documentId);
+      setPinnedDocs((prev) => prev.filter((d) => d.document_id !== documentId));
+    } catch (error) {
+      console.error("Failed to unpin document:", error);
+    }
+  };
+
+  // 문서 고정 모달 열기
+  const handleOpenPinModal = async () => {
+    try {
+      const docs = await getDocuments();
+      setAvailableDocs(docs);
+      setShowPinModal(true);
+    } catch (error) {
+      console.error("Failed to load documents:", error);
+    }
+  };
 
   // 자동 스크롤
   useEffect(() => {
@@ -430,6 +484,88 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
 
   return (
     <div className="flex flex-col h-full">
+      {/* 고정 문서 태그 표시 */}
+      {pinnedDocs.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-4 pt-2 border-b border-gray-200 dark:border-gray-700">
+          {pinnedDocs.map((doc) => (
+            <span
+              key={doc.document_id}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200"
+            >
+              📌 {doc.title || doc.document_id}
+              <button
+                onClick={() => handleUnpinDocument(doc.document_id)}
+                className="ml-0.5 text-blue-500 hover:text-red-600 dark:text-blue-300 dark:hover:text-red-400 font-bold"
+                title="고정 해제"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* 문서 고정 모달 */}
+      {showPinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 max-w-md w-full max-h-[60vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">📌 문서 고정</h3>
+              <button
+                onClick={() => setShowPinModal(false)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+              이 대화에 항상 포함할 문서를 선택하세요. 고정된 문서는 모든 질문에 컨텍스트로 제공됩니다.
+            </p>
+            {availableDocs.length === 0 ? (
+              <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-4">
+                등록된 문서가 없습니다.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {availableDocs.map((doc) => {
+                  const isPinned = pinnedDocs.some((pd) => pd.document_id === doc.document_id);
+                  return (
+                    <div
+                      key={doc.document_id}
+                      className={`flex items-center justify-between p-2 rounded border ${
+                        isPinned
+                          ? "border-blue-300 bg-blue-50 dark:bg-blue-900/30 dark:border-blue-600"
+                          : "border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700"
+                      }`}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                          {doc.filename}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {doc.status === "completed" ? `청크 ${doc.total_chunks || 0}개` : doc.status}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => isPinned ? handleUnpinDocument(doc.document_id) : handlePinDocument(doc.document_id)}
+                        disabled={pinLoading}
+                        className={`ml-2 px-3 py-1 text-xs rounded transition-colors ${
+                          isPinned
+                            ? "bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
+                            : "bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800"
+                        } disabled:opacity-50`}
+                      >
+                        {pinLoading ? "..." : isPinned ? "고정 해제" : "📌 고정"}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-gray-400">
@@ -564,6 +700,17 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
           />
         )}
         <div className="p-4 flex gap-2 items-end">
+          {/* 문서 고정 버튼 */}
+          {sessionId && (
+            <button
+              onClick={handleOpenPinModal}
+              disabled={isLoading || isStreaming}
+              className="px-2 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-700 text-gray-600 dark:text-gray-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              title="문서 고정 — 이 대화에 항상 포함할 문서 선택"
+            >
+              📌
+            </button>
+          )}
           {/* 음성 입력 버튼 */}
           <VoiceInput
             onTranscript={handleVoiceTranscript}

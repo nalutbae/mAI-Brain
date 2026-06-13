@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException
 
 from app.config import ChatMode
 from app.core.agent_runner import detect_agent_mode, run_agent
+from app.core.context_manager import get_context_manager
 from app.core.llm import get_llm_client
 from app.core.search import hybrid_search
 from app.core.session_store import get_session_store
@@ -130,8 +131,33 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
                 detail=f"검색 중 오류가 발생했습니다: {exc}",
             ) from exc
 
-    # 3. 이전 대화 기록 로드
-    chat_history = store.get_chat_history(session_id, limit=10)
+    # 3. 컨텍스트 관리자로 대화 기록 로드 (요약 + 고정 문서 + 최근 대화)
+    ctx_manager = get_context_manager()
+    context_data = ctx_manager.get_context_for_chat(session_id)
+
+    # 요약이 있으면 chat_history 앞에 요약 시스템 메시지 추가
+    chat_history = context_data["chat_history"]
+    summary = context_data.get("summary")
+    if summary:
+        chat_history = [
+            {"role": "system", "content": f"[이전 대화 요약]\n{summary}"},
+        ] + chat_history
+
+    # 고정 문서 컨텍스트가 있으면 검색 결과에 추가
+    pinned_contexts = context_data.get("pinned_contexts", [])
+    if search_result and search_result.hits and pinned_contexts:
+        # 중복 제거: 이미 검색 결과에 있는 source는 제외
+        existing_sources = {h.source for h in search_result.hits}
+        for ph in pinned_contexts:
+            if ph.source not in existing_sources:
+                search_result.hits.insert(0, ph)
+    elif pinned_contexts and not is_creative:
+        # 검색 결과가 없어도 고정 문서는 포함
+        if not search_result:
+            from app.core.search import SearchResult
+            search_result = SearchResult(hits=pinned_contexts, query=request.question, mode=request.mode)
+        else:
+            search_result.hits = pinned_contexts
 
     # 4. LLM 답변 생성
     answer = None
