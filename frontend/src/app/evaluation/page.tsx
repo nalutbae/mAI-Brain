@@ -9,9 +9,11 @@ import {
   listQAPairs,
   createQAPair,
   deleteQAPair,
+  updateQAPair,
   runEvaluation,
   listEvaluationResults,
   getEvaluationStats,
+  exportEvaluationResults,
 } from "../../lib/api";
 
 // ── 메트릭 바 컴포넌트 ──────────────────────────────────────────────────────
@@ -178,6 +180,10 @@ export default function EvaluationPage() {
   const [showForm, setShowForm] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editQuestion, setEditQuestion] = useState("");
+  const [editAnswer, setEditAnswer] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
@@ -215,6 +221,51 @@ export default function EvaluationPage() {
       await loadData();
     } catch (err) {
       setError(err instanceof Error ? err.message : "삭제 실패");
+    }
+  };
+
+  const startEditing = (pair: QAPair) => {
+    setEditingId(pair.id);
+    setEditQuestion(pair.question);
+    setEditAnswer(pair.expected_answer);
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    setEditQuestion("");
+    setEditAnswer("");
+  };
+
+  const handleUpdateQA = async () => {
+    if (!editingId || !editQuestion.trim() || !editAnswer.trim()) return;
+    try {
+      await updateQAPair(editingId, {
+        question: editQuestion.trim(),
+        expected_answer: editAnswer.trim(),
+      });
+      cancelEditing();
+      await loadData();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "QA pair 수정 실패");
+    }
+  };
+
+  const handleExport = async (format: "json" | "csv") => {
+    setExporting(true);
+    try {
+      const blob = await exportEvaluationResults(format);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `evaluation_results.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "내보내기 실패");
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -320,32 +371,82 @@ export default function EvaluationPage() {
               {qaPairs.map((pair) => (
                 <div
                   key={pair.id}
-                  className="flex items-start justify-between p-3 bg-gray-50 dark:bg-gray-750 rounded-md border border-gray-100 dark:border-gray-700"
+                  className="p-3 bg-gray-50 dark:bg-gray-750 rounded-md border border-gray-100 dark:border-gray-700"
                 >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                      {pair.question}
-                    </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
-                      {pair.expected_answer.slice(0, 80)}...
-                    </p>
-                    <div className="flex gap-2 mt-1">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
-                        {pair.mode}
-                      </span>
-                      {pair.expected_sources.map((s) => (
-                        <span key={s} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300">
-                          {s}
-                        </span>
-                      ))}
+                  {editingId === pair.id ? (
+                    /* ── 인라인 수정 폼 ── */
+                    <div className="space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">질문 *</label>
+                        <textarea
+                          value={editQuestion}
+                          onChange={(e) => setEditQuestion(e.target.value)}
+                          className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
+                          rows={2}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">기대 정답 *</label>
+                        <textarea
+                          value={editAnswer}
+                          onChange={(e) => setEditAnswer(e.target.value)}
+                          className="w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500"
+                          rows={3}
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleUpdateQA}
+                          disabled={!editQuestion.trim() || !editAnswer.trim()}
+                          className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          저장
+                        </button>
+                        <button
+                          onClick={cancelEditing}
+                          className="px-3 py-1.5 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-sm rounded-md hover:bg-gray-300 dark:hover:bg-gray-500"
+                        >
+                          취소
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteQA(pair.id)}
-                    className="ml-2 text-red-500 hover:text-red-700 text-sm"
-                  >
-                    삭제
-                  </button>
+                  ) : (
+                    /* ── 일반 표시 모드 ── */
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                          {pair.question}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">
+                          {pair.expected_answer.slice(0, 80)}...
+                        </p>
+                        <div className="flex gap-2 mt-1">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300">
+                            {pair.mode}
+                          </span>
+                          {pair.expected_sources.map((s) => (
+                            <span key={s} className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-gray-200 dark:bg-gray-600 text-gray-600 dark:text-gray-300">
+                              {s}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 ml-2 shrink-0">
+                        <button
+                          onClick={() => startEditing(pair)}
+                          className="text-blue-500 hover:text-blue-700 text-sm"
+                        >
+                          수정
+                        </button>
+                        <button
+                          onClick={() => handleDeleteQA(pair.id)}
+                          className="text-red-500 hover:text-red-700 text-sm"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -354,9 +455,30 @@ export default function EvaluationPage() {
 
         {/* ── 평가 결과 ──────────────────────────── */}
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-4">
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-            평가 결과 ({evalResults.length})
-          </h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              평가 결과 ({evalResults.length})
+            </h2>
+            {evalResults.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500 dark:text-gray-400">결과 내보내기:</span>
+                <button
+                  onClick={() => handleExport("json")}
+                  disabled={exporting}
+                  className="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded-md hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  JSON
+                </button>
+                <button
+                  onClick={() => handleExport("csv")}
+                  disabled={exporting}
+                  className="px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 disabled:opacity-50"
+                >
+                  CSV
+                </button>
+              </div>
+            )}
+          </div>
           {evalResults.length === 0 ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">
               아직 실행된 평가가 없습니다.
