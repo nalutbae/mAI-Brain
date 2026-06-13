@@ -1,0 +1,14 @@
+[
+  {
+    "id": "fb_20260612184938118653",
+    "session_id": "afe8acc0-2aec-4c53-a3c4-ed2db051bbbe",
+    "query": "",
+    "answer": "# AI 리터러시를 갖춘 전문가: 구체적 정의와 실행 방안\n\n제공된 문서들을 종합 분석한 결과, AI 리터러시를 갖춘 전문가는 **단순히 AI 도구를 사용할 줄 아는 사람이 아니라, AI의 작동 원리와 한계를 이해하고, AI를 전략적으로 활용하며, 인간 고유의 가치를 유지하는 사람**입니다.\n\n---\n\n## 1. AI 리터러시를 갖춘 전문가의 핵심 역량\n\n### 1.1 AI의 본질 이해\n- **AI는 통계적 패턴 인식기**임을 이해합니다. AI가 '생각'하는 것이 아니라 확률적으로 가장 그럴듯한 다음 토큰을 예측한다는 점을 인지합니다 [The Borrowed Mind, Chapter 4].\n- **반지능(Anti-Intelligence)** 개념을 이해합니다. AI의 유창함이 이해와 동일하지 않으며, 일관성이 진실과 동의어가 아님을 압니다 [The Borrowed Mind, Chapter 4].\n- **할루시네이션**의 근본 원인을 이해합니다. AI가 자신이 모르는 정보에 대해 자신",
+    "feedback_type": "thumbs_up",
+    "tags": [],
+    "comment": "",
+    "correction_type": null,
+    "correction_text": "",
+    "created_at": "2026-06-12T18:49:38.118765+00:00"
+  }
+]

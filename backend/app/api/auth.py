@@ -78,6 +78,7 @@ async def register(req: UserCreate, response: Response):
         httponly=True,
         max_age=ACCESS_TOKEN_EXPIRE_HOURS * 3600,
         samesite="lax",
+        path="/",
     )
 
     return _user_to_response(user)
@@ -104,6 +105,7 @@ async def login(req: UserLogin, response: Response):
         httponly=True,
         max_age=ACCESS_TOKEN_EXPIRE_HOURS * 3600,
         samesite="lax",
+        path="/",
     )
 
     logger.info("로그인 성공: %s (role=%s)", user["username"], user["role"])
@@ -115,7 +117,7 @@ async def login(req: UserLogin, response: Response):
 @router.post("/logout")
 async def logout(response: Response):
     """로그아웃. 쿠키 삭제."""
-    response.delete_cookie(key=COOKIE_NAME)
+    response.delete_cookie(key=COOKIE_NAME, path="/")
     return {"message": "로그아웃되었습니다."}
 
 

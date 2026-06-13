@@ -31,7 +31,7 @@ def _user_to_response(user: dict) -> UserResponse:
 
 # ── 사용자 목록 ───────────────────────────────────────────────────────────────
 
-@router.get("/", response_model=list[UserResponse])
+@router.get("", response_model=list[UserResponse])
 async def list_users(
     limit: int = 50,
     offset: int = 0,

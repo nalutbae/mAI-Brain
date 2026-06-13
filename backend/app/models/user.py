@@ -84,6 +84,10 @@ class UserStore:
 
     def _init_db(self):
         import sqlite3
+        # 빈/손상된 DB 파일은 삭제 후 재생성
+        if self._db_path.exists() and self._db_path.stat().st_size == 0:
+            logger.warning("빈 users.db 파일 감지 — 삭제 후 재생성: %s", self._db_path)
+            self._db_path.unlink(missing_ok=True)
         conn = sqlite3.connect(str(self._db_path))
         conn.execute("""
             CREATE TABLE IF NOT EXISTS users (

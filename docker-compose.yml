@@ -52,12 +52,15 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # nginx가 /api를 백엔드로 프록시하므로 빈 문자열(상대 경로) 사용
+        NEXT_PUBLIC_API_URL: ""
     container_name: mai-frontend
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
     depends_on:
       - backend
     environment:
-      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - NEXT_PUBLIC_API_URL=
       - NEXT_PUBLIC_APP_NAME=${APP_NAME:-mAI-Brain}
     restart: unless-stopped

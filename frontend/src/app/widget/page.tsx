@@ -41,7 +41,8 @@ interface Message {
   content: string;
 }
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// nginx 프록시 모드에서는 빈 문자열(상대 경로) 사용
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 async function fetchToken(
   widgetId: string,

@@ -12,7 +12,8 @@ RUN npm ci
 COPY . .
 
 # 환경변수 설정 (빌드 시)
-ARG NEXT_PUBLIC_API_URL=http://localhost:8000
+# nginx가 /api를 백엔드로 프록시하므로 빈 문자열(상대 경로) 사용
+ARG NEXT_PUBLIC_API_URL=
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
 # 정적 빌드

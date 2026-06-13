@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "../lib/auth";
 import ThemeToggle from "./ThemeToggle";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// nginx 프록시 모드에서는 빈 문자열(상대 경로) 사용
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 // 관리자 전용 경로
 const ADMIN_PATHS = ["/admin", "/admin/api-keys", "/admin/chunking", "/admin/prompts", "/admin/users"];

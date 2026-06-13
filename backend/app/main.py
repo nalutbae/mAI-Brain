@@ -75,6 +75,7 @@ app = FastAPI(
     version="0.2.0",
     debug=settings.debug,
     lifespan=lifespan,
+    redirect_slashes=False,  # nginx 프록시 환경에서 307 리다이렉트 CORS 문제 방지
 )
 
 # CORS

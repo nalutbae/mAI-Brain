@@ -3,8 +3,10 @@
  * FastAPI 백엔드와 통신합니다.
  */
 
+// nginx가 /api를 프록시하는 경우 빈 문자열(상대 경로) 사용.
+// 직접 백엔드에 연결하는 경우 http://localhost:8000 등으로 설정.
 const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export async function fetchAPI<T>(
   path: string,

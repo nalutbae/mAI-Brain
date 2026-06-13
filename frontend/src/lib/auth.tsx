@@ -2,7 +2,8 @@
 
 import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// nginx 프록시 모드에서는 빈 문자열(상대 경로) 사용
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 // ── 타입 ──────────────────────────────────────────────────────────────────────
 
@@ -57,12 +58,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const login = async (username: string, password: string): Promise<AuthUser> => {
-    const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ username, password }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username, password }),
+      });
+    } catch (networkErr) {
+      throw new Error("서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.");
+    }
     if (!res.ok) {
       const detail = await res.json().catch(() => ({ detail: "로그인에 실패했습니다." }));
       throw new Error(detail.detail || "로그인에 실패했습니다.");
@@ -73,12 +79,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const register = async (username: string, password: string, display_name?: string): Promise<AuthUser> => {
-    const res = await fetch(`${API_BASE_URL}/api/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ username, password, display_name }),
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE_URL}/api/auth/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ username, password, display_name }),
+      });
+    } catch (networkErr) {
+      throw new Error("서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.");
+    }
     if (!res.ok) {
       const detail = await res.json().catch(() => ({ detail: "회원가입에 실패했습니다." }));
       throw new Error(detail.detail || "회원가입에 실패했습니다.");
