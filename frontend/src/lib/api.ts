@@ -1383,15 +1383,15 @@ export async function fetchKGGraph(
   if (documentId) params.set("document_id", documentId);
   if (entityTypes) params.set("entity_types", entityTypes);
   params.set("limit", String(limit));
-  return fetchAPI(`/kg/graph?${params.toString()}`);
+  return fetchAPI(`/api/kg/graph?${params.toString()}`);
 }
 
 export async function fetchKGStats(): Promise<KGStats> {
-  return fetchAPI("/kg/stats");
+  return fetchAPI("/api/kg/stats");
 }
 
 export async function extractKnowledgeGraph(documentId: string): Promise<unknown> {
-  return fetchAPI("/kg/extract", {
+  return fetchAPI("/api/kg/extract", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ document_id: documentId }),
@@ -1408,12 +1408,12 @@ export async function searchKGEntities(
   if (entityTypes) params.set("entity_types", entityTypes);
   params.set("limit", String(limit));
   const result = await fetchAPI<{ query: string; results: EntitySearchResult[] }>(
-    `/kg/search?${params.toString()}`
+    `/api/kg/search?${params.toString()}`
   );
   return result.results;
 }
 
 export async function fetchKGEntityDetail(entityId: string): Promise<Record<string, unknown>> {
-  return fetchAPI(`/kg/entity/${entityId}`);
+  return fetchAPI(`/api/kg/entity/${entityId}`);
 }
 

@@ -161,4 +161,4 @@ app.include_router(v1.router, prefix="/api/v1", tags=["v1"])
 
 # ── 지식 그래프 ──────────────────────────────────────────────────────────────
 from app.api import knowledge_graph
-app.include_router(knowledge_graph.router)
+app.include_router(knowledge_graph.router, prefix="/api", tags=["knowledge-graph"])
