@@ -4,12 +4,14 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Document,
   getDocuments,
-  uploadMultipleDocuments,
+  uploadMultipleDocumentsAsync,
   deleteDocument,
   uploadUrl,
   reindexAllDocuments,
   reindexDocument,
   getDocumentDetail,
+  streamTaskProgress,
+  UploadAsyncResult,
 } from "../../lib/api";
 import { AdminGuard } from "../../components/AuthGuard";
 
@@ -385,6 +387,10 @@ function AdminContent() {
     error: null,
   });
 
+  // 비동기 업로드 진행률 상태: task_id → { progress, message, filename }
+  const [uploadProgress, setUploadProgress] = useState<Record<string, { progress: number; message?: string; filename: string }>>({});
+  const abortControllersRef = useRef<Record<string, AbortController>>({});
+
   // 문서 목록 불러오기
   const loadDocuments = useCallback(async () => {
     try {
@@ -405,26 +411,146 @@ function AdminContent() {
     return () => clearInterval(interval);
   }, [loadDocuments]);
 
-  // 업로드 실행
+  // 업로드 실행 (비동기 태스크 + SSE 진행률)
   const handleUpload = async () => {
     if (files.length === 0) return;
     setUploading(true);
     setError(null);
     setSuccessMsg(null);
     try {
-      const results = await uploadMultipleDocuments(files);
-      const failed = results.filter((r) => r.status === "failed");
-      const succeeded = results.filter((r) => r.status !== "failed");
+      const results = await uploadMultipleDocumentsAsync(files);
+      const failed = results.filter((r: UploadAsyncResult) => !r.task_id);
+      const succeeded = results.filter((r: UploadAsyncResult) => r.task_id);
+
       if (succeeded.length > 0) {
-        setSuccessMsg(`${succeeded.length}개 파일 업로드 완료`);
+        setSuccessMsg(`${succeeded.length}개 파일 업로드 시작됨 — 인덱싱 진행 중...`);
       }
       if (failed.length > 0) {
         setError(
-          `${failed.length}개 파일 업로드 실패: ${failed.map((f) => f.filename).join(", ")}`
+          `${failed.length}개 파일 업로드 실패: ${failed.map((f: UploadAsyncResult) => f.filename).join(", ")}`
         );
       }
       setFiles([]);
-      loadDocuments();
+
+      // 각 태스크에 대해 SSE 스트리밍으로 진행률 모니터링
+      for (const result of succeeded) {
+        if (!result.task_id) continue;
+
+        // 진행률 상태 초기화
+        setUploadProgress((prev) => ({
+          ...prev,
+          [result.task_id]: { progress: 0, filename: result.filename, message: "대기 중..." },
+        }));
+
+        // SSE 스트리밍 시작 (비동기)
+        streamTaskProgress(result.task_id, {
+          onProgress: (progress, message) => {
+            setUploadProgress((prev) => ({
+              ...prev,
+              [result.task_id]: {
+                ...prev[result.task_id],
+                progress,
+                message: message || `인덱싱 중... ${progress}%`,
+              },
+            }));
+          },
+          onCompleted: () => {
+            setUploadProgress((prev) => ({
+              ...prev,
+              [result.task_id]: {
+                ...prev[result.task_id],
+                progress: 100,
+                message: "인덱싱 완료!",
+              },
+            }));
+            // 2초 후 진행률 상태 제거
+            setTimeout(() => {
+              setUploadProgress((prev) => {
+                const next = { ...prev };
+                delete next[result.task_id];
+                return next;
+              });
+              loadDocuments();
+            }, 2000);
+          },
+          onFailed: (errMsg) => {
+            setUploadProgress((prev) => ({
+              ...prev,
+              [result.task_id]: {
+                ...prev[result.task_id],
+                progress: prev[result.task_id]?.progress || 0,
+                message: `실패: ${errMsg}`,
+              },
+            }));
+            setTimeout(() => {
+              setUploadProgress((prev) => {
+                const next = { ...prev };
+                delete next[result.task_id];
+                return next;
+              });
+            }, 5000);
+          },
+          onDone: () => {
+            // SSE 연결 종료 — 완료 처리는 onCompleted에서 이미 함
+          },
+          onError: (errMsg) => {
+            console.error(`SSE 오류 (${result.filename}):`, errMsg);
+            // SSE 실패 시 폴링으로 대체
+            const pollInterval = setInterval(async () => {
+              try {
+                const { getTaskStatus } = await import("../../lib/api");
+                const status = await getTaskStatus(result.task_id);
+                if (status.status === "completed") {
+                  setUploadProgress((prev) => ({
+                    ...prev,
+                    [result.task_id]: {
+                      ...prev[result.task_id],
+                      progress: 100,
+                      message: "인덱싱 완료!",
+                    },
+                  }));
+                  clearInterval(pollInterval);
+                  setTimeout(() => {
+                    setUploadProgress((prev) => {
+                      const next = { ...prev };
+                      delete next[result.task_id];
+                      return next;
+                    });
+                    loadDocuments();
+                  }, 2000);
+                } else if (status.status === "failed") {
+                  setUploadProgress((prev) => ({
+                    ...prev,
+                    [result.task_id]: {
+                      ...prev[result.task_id],
+                      message: `실패: ${status.error || "알 수 없는 오류"}`,
+                    },
+                  }));
+                  clearInterval(pollInterval);
+                  setTimeout(() => {
+                    setUploadProgress((prev) => {
+                      const next = { ...prev };
+                      delete next[result.task_id];
+                      return next;
+                    });
+                  }, 5000);
+                } else {
+                  setUploadProgress((prev) => ({
+                    ...prev,
+                    [result.task_id]: {
+                      ...prev[result.task_id],
+                      progress: status.progress,
+                      message: `인덱싱 중... ${status.progress}%`,
+                    },
+                  }));
+                }
+              } catch {
+                clearInterval(pollInterval);
+              }
+            }, 3000);
+          },
+        });
+      }
     } catch (e) {
       setError("파일 업로드 중 오류가 발생했습니다.");
     } finally {
@@ -541,6 +667,38 @@ function AdminContent() {
         {successMsg && (
           <div className="mb-4 p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg text-sm text-green-700 dark:text-green-300">
             {successMsg}
+          </div>
+        )}
+
+        {/* 업로드 진행률 표시 */}
+        {Object.keys(uploadProgress).length > 0 && (
+          <div className="mb-4 space-y-2">
+            {Object.entries(uploadProgress).map(([taskId, prog]) => (
+              <div key={taskId} className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate mr-2">
+                    {prog.filename}
+                  </span>
+                  <span className={`text-xs font-medium ${
+                    prog.progress >= 100 ? "text-green-600 dark:text-green-400" :
+                    prog.message?.startsWith("실패") ? "text-red-600 dark:text-red-400" :
+                    "text-blue-600 dark:text-blue-400"
+                  }`}>
+                    {prog.message}
+                  </span>
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                  <div
+                    className={`h-2 rounded-full transition-all duration-300 ${
+                      prog.progress >= 100 ? "bg-green-500" :
+                      prog.message?.startsWith("실패") ? "bg-red-500" :
+                      "bg-blue-500"
+                    }`}
+                    style={{ width: `${prog.progress}%` }}
+                  />
+                </div>
+              </div>
+            ))}
           </div>
         )}
 

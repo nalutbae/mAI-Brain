@@ -4,22 +4,29 @@
 
 엔드포인트:
 - POST /api/documents/upload: 파일 업로드 → 백그라운드 인덱싱
-- GET /api/documents/status/{document_id}: 인덱싱 상태 조회
+- POST /api/documents/upload-async: 파일 업로드 → 태스크 ID 즉시 반환 (비동기)
+- GET /api/documents/status/{document_id}: 인덱싱 상태 조회 (기존 폴링)
+- GET /api/documents/task/{task_id}: 태스크 상태 조회 (비동기)
+- GET /api/documents/task/{task_id}/stream: SSE 실시간 진행률 스트리밍
 - GET /api/documents: 인덱싱된 문서 목록
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile, Query
+from fastapi.responses import StreamingResponse
 
 from app.config import get_settings
+from app.core.task_queue import TaskQueue, TaskStatus, get_task_queue
 from app.core.vectordb import get_vector_db
 from app.ingestion.indexer import SUPPORTED_EXTENSIONS, index_document, index_directory
 from app.ingestion.indexer import get_tracker
@@ -39,9 +46,9 @@ router = APIRouter()
 _indexing_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="indexing")
 
 
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 # 파일 저장 경로
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
 
 def _get_upload_dir() -> Path:
     """업로드 파일 저장 디렉토리 반환 (없으면 생성)"""
@@ -74,9 +81,9 @@ def _save_upload(file: UploadFile, upload_dir: Path) -> Path:
     return dest
 
 
-# ---------------------------------------------------------------------------
-# 백그라운드 인덱싱 태스크
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
+# 백그라운드 인덱싱 태스크 (기존 — ThreadPoolExecutor)
+# --------------------------------------------------------------------------- #
 
 def _run_indexing(file_path: str) -> None:
     """인덱싱 태스크 (스레드풀에서 실행).
@@ -108,9 +115,65 @@ def _run_bulk_index(dir_path: str) -> None:
         logger.exception("일괄 인덱싱 예외")
 
 
-# ---------------------------------------------------------------------------
-# API 엔드포인트
-# ---------------------------------------------------------------------------
+# --------------------------------------------------------------------------- #
+# 비동기 태스크 인덱싱 (BackgroundTasks + TaskQueue)
+# --------------------------------------------------------------------------- #
+
+async def _run_indexing_async(task_id: str, file_path: str, filename: str) -> None:
+    """BackgroundTasks에서 실행하는 비동기 인덱싱.
+
+    TaskQueue를 통해 진행률을 업데이트하고 SSE로 브로드캐스트합니다.
+    실제 무거운 작업은 스레드풀에서 실행하여 이벤트 루프를 블로킹하지 않습니다.
+    """
+    task_queue = get_task_queue()
+
+    try:
+        # PENDING → PROCESSING
+        task_queue.update_progress(task_id, 5, "인덱싱 준비 중...")
+
+        loop = asyncio.get_running_loop()
+
+        # 단계별 진행률 업데이트를 위한 콜백 래핑
+        task_queue.update_progress(task_id, 10, "텍스트 추출 중...")
+
+        def _do_index() -> dict:
+            """스레드풀에서 실행할 인덱싱 작업"""
+            try:
+                result = index_document(file_path)
+                return {
+                    "document_id": result.document_id,
+                    "filename": result.filename,
+                    "status": result.status.value,
+                    "total_chunks": result.total_chunks,
+                    "error": result.error,
+                }
+            except Exception as e:
+                return {
+                    "document_id": "",
+                    "filename": filename,
+                    "status": "failed",
+                    "total_chunks": 0,
+                    "error": str(e),
+                }
+
+        # 스레드풀에서 실제 인덱싱 실행
+        result = await loop.run_in_executor(_indexing_executor, _do_index)
+
+        if result["status"] == "completed":
+            task_queue.complete_task(task_id, result)
+            logger.info("비동기 인덱싱 완료: %s (task_id=%s)", filename, task_id)
+        else:
+            task_queue.fail_task(task_id, result.get("error", "인덱싱 실패"))
+            logger.error("비동기 인덱싱 실패: %s — %s (task_id=%s)", filename, result.get("error"), task_id)
+
+    except Exception as exc:
+        task_queue.fail_task(task_id, f"{type(exc).__name__}: {exc}")
+        logger.exception("비동기 인덱싱 예외: %s (task_id=%s)", filename, task_id)
+
+
+# --------------------------------------------------------------------------- #
+# API 엔드포인트 — 기존 (후방 호환)
+# --------------------------------------------------------------------------- #
 
 @router.post("/upload-multiple")
 async def upload_multiple_documents(
@@ -178,6 +241,8 @@ async def upload_document(
     - 파일 저장 후 스레드풀에서 인덱싱
     - 즉시 {document_id, status: "indexing"} 응답
     - 클라이언트는 GET /status/{document_id} 로 상태 폴링
+
+    ※ 후방 호환 엔드포인트 — 기존 폴링 방식 유지
     """
     # 파일 형식 검증
     filename = file.filename or "unknown"
@@ -218,6 +283,252 @@ async def upload_document(
         message="파일이 업로드되었으며 인덱싱이 시작되었습니다.",
     )
 
+
+# --------------------------------------------------------------------------- #
+# API 엔드포인트 — 비동기 태스크 (새로운)
+# --------------------------------------------------------------------------- #
+
+@router.post("/upload-async")
+async def upload_document_async(
+    background_tasks: BackgroundTasks,
+    file: UploadFile,
+) -> dict:
+    """비동기 문서 업로드 → 태스크 ID 즉시 반환.
+
+    - 파일 저장 후 BackgroundTasks로 인덱싱 예약
+    - 즉시 {task_id, status: "pending"} 응답
+    - 클라이언트는 GET /task/{task_id} 또는 GET /task/{task_id}/stream 으로 진행률 확인
+
+    이 엔드포인트는 기존 /upload와 달리 응답 후 백그라운드에서 처리되며,
+    SSE를 통해 실시간 진행률을 스트리밍할 수 있습니다.
+    """
+    # 파일 형식 검증
+    filename = file.filename or "unknown"
+    suffix = Path(filename).suffix.lower()
+
+    if suffix not in SUPPORTED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"지원하지 않는 파일 형식: {suffix} (PDF, EPUB, TXT, DOCX, DOC, HWP, XLSX, XLS, CSV, MD 지원)",
+        )
+
+    if not file.size or file.size == 0:
+        raise HTTPException(
+            status_code=400,
+            detail="빈 파일은 업로드할 수 없습니다.",
+        )
+
+    # 파일 저장
+    upload_dir = _get_upload_dir()
+    saved_path = _save_upload(file, upload_dir)
+
+    # TaskQueue에 태스크 생성
+    task_queue = get_task_queue()
+    task = task_queue.add_task()
+
+    # 기존 IndexingTracker에도 등록 (후방 호환)
+    from app.ingestion.indexer import _generate_document_id
+    document_id = _generate_document_id(filename)
+    tracker = get_tracker()
+    tracker.start(document_id, filename)
+
+    # BackgroundTasks로 인덱싱 예약
+    background_tasks.add_task(
+        _run_indexing_async,
+        task_id=task.id,
+        file_path=str(saved_path),
+        filename=filename,
+    )
+
+    return {
+        "task_id": task.id,
+        "document_id": document_id,
+        "filename": filename,
+        "status": "pending",
+        "message": "파일이 업로드되었으며 인덱싱이 백그라운드에서 시작됩니다.",
+    }
+
+
+@router.post("/upload-multiple-async")
+async def upload_multiple_documents_async(
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile],
+) -> list[dict]:
+    """여러 파일 비동기 업로드 → 각각 태스크 ID 반환.
+
+    - multipart/form-data로 다중 파일 수신 (필드명 'files')
+    - 각 파일을 저장하고 BackgroundTasks로 인덱싱 예약
+    - 각 파일별 {task_id, status: "pending"} 응답
+    """
+    results: list[dict] = []
+    upload_dir = _get_upload_dir()
+    from app.ingestion.indexer import _generate_document_id
+
+    task_queue = get_task_queue()
+
+    for file in files:
+        filename = file.filename or "unknown"
+        suffix = Path(filename).suffix.lower()
+
+        if suffix not in SUPPORTED_EXTENSIONS:
+            results.append({
+                "task_id": None,
+                "document_id": "",
+                "filename": filename,
+                "status": "failed",
+                "message": f"지원하지 않는 파일 형식: {suffix}",
+            })
+            continue
+
+        if not file.size or file.size == 0:
+            results.append({
+                "task_id": None,
+                "document_id": "",
+                "filename": filename,
+                "status": "failed",
+                "message": "빈 파일입니다.",
+            })
+            continue
+
+        saved_path = _save_upload(file, upload_dir)
+
+        # TaskQueue에 태스크 생성
+        task = task_queue.add_task()
+        document_id = _generate_document_id(filename)
+
+        # 기존 IndexingTracker에도 등록
+        tracker = get_tracker()
+        tracker.start(document_id, filename)
+
+        # BackgroundTasks로 인덱싱 예약
+        background_tasks.add_task(
+            _run_indexing_async,
+            task_id=task.id,
+            file_path=str(saved_path),
+            filename=filename,
+        )
+
+        results.append({
+            "task_id": task.id,
+            "document_id": document_id,
+            "filename": filename,
+            "status": "pending",
+            "message": "파일이 업로드되었으며 인덱싱이 백그라운드에서 시작됩니다.",
+        })
+
+    return results
+
+
+@router.get("/task/{task_id}")
+async def get_task_status(task_id: str) -> dict:
+    """태스크 상태 조회 (폴링용).
+
+    Args:
+        task_id: upload-async에서 반환된 태스크 ID
+
+    Returns:
+        태스크 상태 정보 (status, progress, result, error)
+    """
+    task_queue = get_task_queue()
+    task = task_queue.get_task(task_id)
+
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"태스크를 찾을 수 없습니다: task_id={task_id}",
+        )
+
+    return task.to_dict()
+
+
+@router.get("/task/{task_id}/stream")
+async def stream_task_progress(task_id: str) -> StreamingResponse:
+    """SSE 스트리밍 — 태스크 진행률 실시간 전송.
+
+    Content-Type: text/event-stream 으로 진행률 이벤트를 스트리밍합니다.
+    태스크가 완료/실패하면 [done] 이벤트를 전송하고 연결을 종료합니다.
+
+    이벤트 형식:
+        event: progress
+        data: {"progress": 50, "message": "텍스트 추출 중..."}
+
+        event: completed
+        data: {"progress": 100, "result": {...}}
+
+        event: failed
+        data: {"progress": 30, "error": "에러 메시지"}
+
+        event: done
+        data: {}
+    """
+    task_queue = get_task_queue()
+    task = task_queue.get_task(task_id)
+
+    if task is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"태스크를 찾을 수 없습니다: task_id={task_id}",
+        )
+
+    # 태스크의 이벤트 큐에 구독
+    event_queue = task_queue.subscribe(task_id)
+    if event_queue is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"태스크 이벤트 구독 실패: task_id={task_id}",
+        )
+
+    async def event_generator():
+        """SSE 이벤트 제너레이터"""
+        try:
+            # 이미 완료/실패된 태스크인 경우 즉시 완료 이벤트 전송
+            if task.status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+                event_type = "completed" if task.status == TaskStatus.COMPLETED else "failed"
+                data = task.to_dict()
+                yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                yield f"event: done\ndata: {{}}\n\n"
+                return
+
+            # 이벤트 루프에서 큐 대기
+            while True:
+                try:
+                    # 30초 타임아웃으로 이벤트 대기
+                    event = await asyncio.wait_for(event_queue.get(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    # 타임아웃 시 하트비트 전송 (연결 유지)
+                    yield f"event: heartbeat\ndata: {{}}\n\n"
+                    continue
+
+                event_type = event.get("type", "progress")
+                data = json.dumps(event, ensure_ascii=False)
+
+                yield f"event: {event_type}\ndata: {data}\n\n"
+
+                # 완료/실패 시 종료
+                if event_type in ("completed", "failed"):
+                    yield f"event: done\ndata: {{}}\n\n"
+                    break
+
+        except asyncio.CancelledError:
+            # 클라이언트 연결 종료
+            logger.info("SSE 연결 종료: task_id=%s", task_id)
+        except Exception:
+            logger.exception("SSE 스트리밍 오류: task_id=%s", task_id)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # nginx 버퍼링 방지
+        },
+    )
+
+
+# --------------------------------------------------------------------------- #
+# API 엔드포인트 — 기존 상태 조회 (후방 호환)
+# --------------------------------------------------------------------------- #
 
 @router.get("/status/{document_id}", response_model=DocumentStatusResponse)
 async def get_document_status(document_id: str) -> DocumentStatusResponse:

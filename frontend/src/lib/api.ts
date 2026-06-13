@@ -301,6 +301,199 @@ export async function getDocumentDetail(id: string): Promise<Record<string, unkn
   return fetchAPI(`/api/documents/${id}`);
 }
 
+// ── 비동기 태스크 (업로드 + SSE 진행률) ──────────────────────────────────
+
+export interface TaskStatus {
+  id: string;
+  status: "pending" | "processing" | "completed" | "failed";
+  progress: number;  // 0-100
+  result?: {
+    document_id: string;
+    filename: string;
+    status: string;
+    total_chunks?: number;
+    error?: string | null;
+  };
+  error?: string | null;
+  created_at?: string;
+  completed_at?: string | null;
+}
+
+export interface UploadAsyncResult {
+  task_id: string;
+  document_id: string;
+  filename: string;
+  status: "pending";
+  message: string;
+}
+
+/**
+ * 비동기 파일 업로드 — 태스크 ID를 즉시 반환하고 인덱싱은 백그라운드에서 진행.
+ * SSE로 진행률을 스트리밍할 수 있습니다.
+ */
+export async function uploadDocumentAsync(file: File): Promise<UploadAsyncResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/api/documents/upload-async`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * 여러 파일 비동기 업로드 — 각각 태스크 ID 반환
+ */
+export async function uploadMultipleDocumentsAsync(files: File[]): Promise<UploadAsyncResult[]> {
+  const formData = new FormData();
+  for (const file of files) {
+    formData.append("files", file);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/documents/upload-multiple-async`, {
+    method: "POST",
+    credentials: "include",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`API error: ${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+/**
+ * 태스크 상태 폴링
+ */
+export async function getTaskStatus(taskId: string): Promise<TaskStatus> {
+  return fetchAPI(`/api/documents/task/${taskId}`);
+}
+
+/** SSE 진행률 이벤트 타입 */
+export interface TaskProgressEvent {
+  type: "progress" | "completed" | "failed" | "done" | "heartbeat";
+  progress?: number;
+  message?: string;
+  result?: TaskStatus["result"];
+  error?: string;
+}
+
+export interface TaskStreamCallbacks {
+  onProgress?: (progress: number, message?: string) => void;
+  onCompleted?: (result: TaskStatus["result"]) => void;
+  onFailed?: (error: string) => void;
+  onDone?: () => void;
+  onError?: (error: string) => void;
+}
+
+/**
+ * SSE 스트리밍 — 태스크 진행률 실시간 수신.
+ * fetch + ReadableStream을 사용 (EventSource 대신 POST/인증 지원).
+ */
+export async function streamTaskProgress(
+  taskId: string,
+  callbacks: TaskStreamCallbacks
+): Promise<void> {
+  const url = `${API_BASE_URL}/api/documents/task/${taskId}/stream`;
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "text/event-stream",
+      },
+    });
+  } catch (err) {
+    callbacks.onError?.(err instanceof Error ? err.message : "네트워크 오류가 발생했습니다.");
+    return;
+  }
+
+  if (!response.ok) {
+    callbacks.onError?.(`API 오류: ${response.status} ${response.statusText}`);
+    return;
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    callbacks.onError?.("응답 스트림을 읽을 수 없습니다.");
+    return;
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE는 빈 줄(\n\n)로 이벤트를 구분
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+
+      for (const eventStr of events) {
+        if (!eventStr.trim()) continue;
+
+        let eventType = "";
+        let eventData = "";
+
+        for (const line of eventStr.split("\n")) {
+          if (line.startsWith("event: ")) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith("data: ")) {
+            eventData = line.slice(6);
+          }
+        }
+
+        if (!eventType) continue;
+
+        // done 이벤트는 데이터가 없을 수 있음
+        if (eventType === "done") {
+          callbacks.onDone?.();
+          return;
+        }
+
+        if (eventType === "heartbeat") continue;
+
+        let data: TaskProgressEvent;
+        try {
+          data = JSON.parse(eventData);
+        } catch {
+          continue;
+        }
+
+        switch (eventType) {
+          case "progress":
+            callbacks.onProgress?.(data.progress ?? 0, data.message);
+            break;
+          case "completed":
+            callbacks.onCompleted?.(data.result);
+            break;
+          case "failed":
+            callbacks.onFailed?.(data.error || "인덱싱에 실패했습니다.");
+            break;
+        }
+      }
+    }
+  } catch (err) {
+    callbacks.onError?.(err instanceof Error ? err.message : "스트리밍 중 오류가 발생했습니다.");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 // ── 세션 관리 ─────────────────────────────────────────────────────────────
 
 export interface Session {
