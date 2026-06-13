@@ -25,6 +25,7 @@ from app.core.llm_stream import get_llm_stream_client
 from app.core.search import hybrid_search
 from app.core.session_store import get_session_store
 from app.models.chat import ChatRequest
+from app.core.citation_parser import parse_citations
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +148,22 @@ async def stream_chat(request: ChatRequest, req: Request):
                     for h in search_result.hits
                 ]
                 yield f"event: sources\ndata: {json.dumps({'sources': sources_data}, ensure_ascii=False)}\n\n"
+
+                # 6.5. 인용 마커 파싱 — [[N]] → Citation 매핑
+                if not is_creative:
+                    citations = parse_citations(full_answer, search_result.hits)
+                    if citations:
+                        citations_data = [
+                            {
+                                "index": c.index,
+                                "source": c.source,
+                                "page": c.page,
+                                "text": c.text,
+                                "score": c.score,
+                            }
+                            for c in citations
+                        ]
+                        yield f"event: citations\ndata: {json.dumps({'citations': citations_data}, ensure_ascii=False)}\n\n"
 
             # 7. 대화 기록 저장
             store.add_message(

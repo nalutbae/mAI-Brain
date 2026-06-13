@@ -25,6 +25,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: string[];
+  citations?: Array<{ index: number; source: string; page?: number; text: string; score: number }>;
   agentResults?: AgentToolResult[];  // 에이전트 도구 결과
 }
 
@@ -217,6 +218,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
 
     let fullAnswer = "";
     let receivedSources: string[] | undefined;
+    let receivedCitations: Message["citations"];
 
     try {
       await chatStreamApi(
@@ -246,6 +248,17 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
               updated[streamMessageIndex] = {
                 ...updated[streamMessageIndex],
                 sources: receivedSources,
+              };
+              return updated;
+            });
+          },
+          onCitations: (citations) => {
+            receivedCitations = citations;
+            setMessages((prev) => {
+              const updated = [...prev];
+              updated[streamMessageIndex] = {
+                ...updated[streamMessageIndex],
+                citations: receivedCitations,
               };
               return updated;
             });
@@ -296,6 +309,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
           role: "assistant",
           content: response.answer,
           sources: mode === "creative" ? undefined : response.sources?.map((s) => s.source),
+          citations: response.citations,
         };
 
         setMessages((prev) => {

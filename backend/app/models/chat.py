@@ -66,6 +66,15 @@ class ChatRequest(BaseModel):
 # 응답 모델
 # --------------------------------------------------------------------------- #
 
+class Citation(BaseModel):
+    """인라인 인용 정보 — 답변 텍스트의 [[N]] 마커와 매핑"""
+    index: int = Field(..., description="인용 번호 (1부터 시작)")
+    source: str = Field(..., description="출처 파일명")
+    page: Optional[int] = Field(default=None, description="원본 문서 페이지 번호")
+    text: str = Field(..., description="인용된 청크 원문 (최대 300자)")
+    score: float = Field(default=0.0, description="검색 점수")
+
+
 class ChatResponse(BaseModel):
     """채팅 응답
 
@@ -75,6 +84,10 @@ class ChatResponse(BaseModel):
     sources: Optional[list[SearchHit]] = Field(
         default=None,
         description="검색 출처 (출처 요청 시에만 포함)",
+    )
+    citations: Optional[list[Citation]] = Field(
+        default=None,
+        description="인라인 인용 목록 — [[N]] 마커와 매핑",
     )
     mode: ChatMode = Field(..., description="사용된 검색 모드")
     session_id: str = Field(..., description="세션 ID")

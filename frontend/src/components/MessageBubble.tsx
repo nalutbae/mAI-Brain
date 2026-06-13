@@ -1,17 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { submitFeedback, type FeedbackType, type FeedbackTag } from "../lib/api";
 
-/**
- * 메시지 버블 컴포넌트
- * 사용자/AI 메시지 스타일 분리 + 👍👎 피드백 버튼
- */
+// ── Types ──────────────────────────────────────────────────────────────────
+
+interface Citation {
+  index: number;
+  source: string;
+  page?: number;
+  text: string;
+  score: number;
+}
 
 interface Message {
   role: "user" | "assistant";
   content: string;
   sources?: string[];
+  citations?: Citation[];
 }
 
 interface MessageBubbleProps {
@@ -20,6 +26,97 @@ interface MessageBubbleProps {
   messageIndex?: number;
   isStreaming?: boolean;
 }
+
+// ── Inline citation renderer ──────────────────────────────────────────────
+
+/** [[N]] 마커를 파싱하여 인용 뱃지가 인라인으로 포함된 React 노드로 변환 */
+function renderContentWithCitations(
+  content: string,
+  citations: Citation[] | undefined,
+  onCitationClick: (index: number) => void,
+): React.ReactNode[] {
+  if (!citations || citations.length === 0) {
+    return [content];
+  }
+
+  // [[1]], [[2]], [[3]] 등을 기준으로 텍스트 분할
+  const citationPattern = /\[\[(\d+)\]\]/g;
+  const parts: React.ReactNode[] = [];
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let keyCounter = 0;
+
+  while ((match = citationPattern.exec(content)) !== null) {
+    // 마커 앞의 일반 텍스트
+    if (match.index > lastIndex) {
+      parts.push(
+        <span key={`t-${keyCounter++}`}>
+          {content.slice(lastIndex, match.index)}
+        </span>,
+      );
+    }
+
+    const citationIndex = parseInt(match[1], 10);
+    const citation = citations.find((c) => c.index === citationIndex);
+
+    // 인용 뱃지
+    parts.push(
+      <button
+        key={`c-${keyCounter++}`}
+        onClick={(e) => {
+          e.stopPropagation();
+          onCitationClick(citationIndex);
+        }}
+        className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold leading-none rounded-full bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 cursor-pointer align-super mx-0.5 transition-colors"
+        title={citation ? `${citation.source}${citation.page ? `, p.${citation.page}` : ""}` : `인용 ${citationIndex}`}
+      >
+        {citationIndex}
+      </button>,
+    );
+
+    lastIndex = citationPattern.lastIndex;
+  }
+
+  // 마지막 남은 텍스트
+  if (lastIndex < content.length) {
+    parts.push(
+      <span key={`t-${keyCounter++}`}>
+        {content.slice(lastIndex)}
+      </span>,
+    );
+  }
+
+  return parts;
+}
+
+// ── Citation detail card ───────────────────────────────────────────────────
+
+function CitationCard({ citation }: { citation: Citation }) {
+  return (
+    <div className="bg-blue-50 dark:bg-blue-900/30 rounded-lg p-2 text-xs border border-blue-200 dark:border-blue-700">
+      <div className="flex items-center gap-1 mb-1">
+        <span className="inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold rounded-full bg-blue-500 text-white">
+          {citation.index}
+        </span>
+        <span className="font-medium text-blue-800 dark:text-blue-300 truncate max-w-[200px]">
+          {citation.source}
+        </span>
+        {citation.page != null && (
+          <span className="text-gray-500 dark:text-gray-400">
+            p.{citation.page}
+          </span>
+        )}
+      </div>
+      {citation.text && (
+        <p className="text-gray-700 dark:text-gray-300 leading-relaxed line-clamp-3">
+          {citation.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ── Feedback tags ───────────────────────────────────────────────────────────
 
 const FEEDBACK_TAGS: { value: FeedbackTag; label: string }[] = [
   { value: "irrelevant", label: "관련 없음" },
@@ -30,6 +127,8 @@ const FEEDBACK_TAGS: { value: FeedbackTag; label: string }[] = [
   { value: "biased", label: "편향" },
   { value: "unclear", label: "불분명" },
 ];
+
+// ── Main component ─────────────────────────────────────────────────────────
 
 export default function MessageBubble({ message, sessionId, messageIndex, isStreaming }: MessageBubbleProps) {
   const isUser = message.role === "user";
@@ -42,33 +141,48 @@ export default function MessageBubble({ message, sessionId, messageIndex, isStre
   const [submitting, setSubmitting] = useState(false);
   const [showCorrection, setShowCorrection] = useState(false);
 
+  // 인용 상세 팝업 상태
+  const [activeCitation, setActiveCitation] = useState<number | null>(null);
+
+  const handleCitationClick = (index: number) => {
+    setActiveCitation(activeCitation === index ? null : index);
+  };
+
+  // 인용 뱃지가 포함된 콘텐츠
+  const renderedContent = useMemo(
+    () => renderContentWithCitations(message.content, message.citations, handleCitationClick),
+    [message.content, message.citations, activeCitation],
+  );
+
+  // 활성 인용 정보
+  const activeCitationData = message.citations?.find((c) => c.index === activeCitation);
+
   const handleThumbsUp = async () => {
     if (feedbackGiven || submitting) return;
     setFeedbackGiven("thumbs_up");
     setSubmitting(true);
     try {
       await submitFeedback({
-        session_id: sessionId,
-        query: "", // will be filled by ChatInterface
-        answer: message.content.slice(0, 500),
+        session_id: sessionId ?? "",
+        message_index: messageIndex ?? 0,
         feedback_type: "thumbs_up",
       });
     } catch (err) {
       console.error("피드백 제출 실패:", err);
+      setFeedbackGiven(null);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const handleThumbsDown = () => {
-    if (feedbackGiven) return;
-    setFeedbackGiven("thumbs_down");
+  const handleThumbsDown = async () => {
+    if (feedbackGiven || submitting) return;
     setShowTags(true);
   };
 
   const handleTagToggle = (tag: FeedbackTag) => {
     setSelectedTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
   };
 
@@ -77,15 +191,13 @@ export default function MessageBubble({ message, sessionId, messageIndex, isStre
     setSubmitting(true);
     try {
       await submitFeedback({
-        session_id: sessionId,
-        query: "",
-        answer: message.content.slice(0, 500),
+        session_id: sessionId ?? "",
+        message_index: messageIndex ?? 0,
         feedback_type: "thumbs_down",
-        tags: selectedTags,
-        comment,
-        ...(showCorrection && correctionText
-          ? { correction_type: correctionType, correction_text: correctionText }
-          : {}),
+        tags: selectedTags.length > 0 ? selectedTags : undefined,
+        comment: comment || undefined,
+        correction_type: showCorrection ? correctionType : undefined,
+        correction_text: showCorrection ? correctionText : undefined,
       });
       setShowTags(false);
     } catch (err) {
@@ -101,16 +213,48 @@ export default function MessageBubble({ message, sessionId, messageIndex, isStre
         className={`max-w-[80%] rounded-2xl px-4 py-3 ${
           isUser
             ? "bg-blue-600 text-white rounded-br-none"
-            : "bg-gray-200 text-gray-800 rounded-bl-none"
+            : "bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-100 rounded-bl-none"
         }`}
       >
-        <p className="text-sm whitespace-pre-wrap">
-          {message.content || (isStreaming ? "" : "")}
+        {/* ── 메시지 본문 (인용 뱃지 포함) ── */}
+        <p className="text-sm whitespace-pre-wrap leading-relaxed">
+          {renderedContent || (isStreaming ? "" : "")}
           {isStreaming && (
             <span className="inline-block w-1.5 h-4 ml-0.5 bg-gray-600 dark:bg-gray-300 animate-pulse align-text-bottom rounded-sm" />
           )}
         </p>
-        {message.sources && message.sources.length > 0 && (
+
+        {/* ── 인용 상세 카드 (클릭한 인용) ── */}
+        {activeCitationData && (
+          <div className="mt-2">
+            <CitationCard citation={activeCitationData} />
+          </div>
+        )}
+
+        {/* ── 전체 출처 목록 (citations가 있으면 인용 카드 목록으로 대체) ── */}
+        {message.citations && message.citations.length > 0 && !activeCitation && (
+          <div className="mt-2 pt-2 border-t border-black/10 dark:border-white/10">
+            <details className="text-xs">
+              <summary className="font-medium text-gray-600 dark:text-gray-300 cursor-pointer hover:text-blue-600 dark:hover:text-blue-400">
+                📚 출처 {message.citations.length}개
+              </summary>
+              <div className="mt-1.5 space-y-1.5">
+                {message.citations.map((c) => (
+                  <button
+                    key={c.index}
+                    onClick={() => handleCitationClick(c.index)}
+                    className="w-full text-left"
+                  >
+                    <CitationCard citation={c} />
+                  </button>
+                ))}
+              </div>
+            </details>
+          </div>
+        )}
+
+        {/* ── 기존 sources (citations가 없을 때만 표시) ── */}
+        {(!message.citations || message.citations.length === 0) && message.sources && message.sources.length > 0 && (
           <div className="mt-2 pt-2 border-t border-black/10 text-xs text-gray-600 dark:text-gray-300">
             <span className="font-medium">출처:</span> {message.sources.join(", ")}
           </div>
@@ -118,7 +262,7 @@ export default function MessageBubble({ message, sessionId, messageIndex, isStre
 
         {/* 👍👎 피드백 버튼 — AI 메시지에만 표시, 스트리밍 중에는 숨김 */}
         {!isUser && !feedbackGiven && !isStreaming && (
-          <div className="mt-2 pt-2 border-t border-black/10 flex gap-2">
+          <div className="mt-2 pt-2 border-t border-black/10 dark:border-white/10 flex gap-2">
             <button
               onClick={handleThumbsUp}
               disabled={submitting}
@@ -139,14 +283,14 @@ export default function MessageBubble({ message, sessionId, messageIndex, isStre
 
         {/* 피드백 완료 표시 */}
         {!isUser && feedbackGiven && (
-          <div className="mt-2 pt-2 border-t border-black/10 text-xs opacity-60">
+          <div className="mt-2 pt-2 border-t border-black/10 dark:border-white/10 text-xs opacity-60">
             {feedbackGiven === "thumbs_up" ? "👍 평가해 주셔서 감사합니다" : "👎 피드백을 남겨주셔서 감사합니다"}
           </div>
         )}
 
-        {/* 👎 피드백 상세 폼 */}
-        {!isUser && showTags && (
-          <div className="mt-3 pt-3 border-t border-black/10 space-y-3">
+        {/* 👎 상세 피드백 폼 */}
+        {!isUser && feedbackGiven === null && showTags && (
+          <div className="mt-2 pt-2 border-t border-black/10 dark:border-white/10 space-y-2">
             <p className="text-xs font-medium text-gray-700 dark:text-gray-300">어떤 문제가 있었나요?</p>
             <div className="flex flex-wrap gap-1.5">
               {FEEDBACK_TAGS.map((tag) => (

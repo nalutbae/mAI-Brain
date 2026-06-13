@@ -56,6 +56,7 @@ export interface ChatRequest {
 export interface ChatResponse {
   answer: string;
   sources?: Array<{ source: string; text: string; score: number; page?: number }>;
+  citations?: Citation[];
   session_id: string;
 }
 
@@ -68,11 +69,21 @@ export async function chatApi(request: ChatRequest): Promise<ChatResponse> {
 
 // ── 채팅 스트리밍 ────────────────────────────────────────────────────────
 
+export interface Citation {
+  index: number;
+  source: string;
+  page?: number;
+  text: string;
+  score: number;
+}
+
 export interface StreamCallbacks {
   /** 토큰 조각 수신 시 호출 */
   onToken: (token: string) => void;
   /** 검색 출처 수신 시 호출 */
   onSources?: (sources: Array<{ source: string; text: string; score: number; page?: number }>) => void;
+  /** 인용 마커 수신 시 호출 ([[N]] → Citation 매핑) */
+  onCitations?: (citations: Citation[]) => void;
   /** 에이전트 스텝 수신 시 호출 */
   onSteps?: (steps: Array<{ type: string; content: string; tool_name?: string }>) => void;
   /** 스트리밍 완료 시 호출 (session_id 포함) */
@@ -162,6 +173,11 @@ export async function chatStreamApi(
             case "sources":
               if (callbacks.onSources && data.sources) {
                 callbacks.onSources(data.sources);
+              }
+              break;
+            case "citations":
+              if (callbacks.onCitations && data.citations) {
+                callbacks.onCitations(data.citations);
               }
               break;
             case "steps":

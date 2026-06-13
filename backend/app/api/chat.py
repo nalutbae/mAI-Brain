@@ -28,6 +28,7 @@ from app.models.chat import (
     AgentToolSpec,
     SearchHit,
 )
+from app.core.citation_parser import parse_citations
 
 logger = logging.getLogger(__name__)
 
@@ -181,9 +182,15 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
     )
 
     # 6. 응답 반환
+    # 인용 마커 파싱 — [[N]] → Citation 매핑
+    citations = None
+    if search_result and search_result.hits and not is_creative:
+        citations = parse_citations(answer, search_result.hits)
+
     return ChatResponse(
         answer=answer,
         sources=search_result.hits if search_result and search_result.hits else None,
+        citations=citations,
         mode=request.mode,
         session_id=session_id,
     )
