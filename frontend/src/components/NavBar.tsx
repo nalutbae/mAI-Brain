@@ -59,6 +59,7 @@ export default function NavBar() {
     { href: "/workspaces", label: "📁 워크스페이스", active: pathname === "/workspaces", adminOnly: false },
     { href: "/sessions", label: "📋 대화 목록", active: pathname === "/sessions", adminOnly: false },
     { href: "/cross-reasoning", label: "🔀 교차추론", active: pathname === "/cross-reasoning", adminOnly: false },
+    { href: "/knowledge-graph", label: "🕸️ 지식그래프", active: pathname === "/knowledge-graph", adminOnly: false },
     { href: "/admin", label: "📚 문서 관리", active: pathname === "/admin", adminOnly: true },
     { href: "/admin/chunking", label: "⚙️ 청킹", active: pathname === "/admin/chunking", adminOnly: true },
     { href: "/admin/prompts", label: "📝 프롬프트", active: pathname === "/admin/prompts", adminOnly: true },

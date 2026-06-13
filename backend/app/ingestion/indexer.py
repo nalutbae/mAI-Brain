@@ -224,6 +224,44 @@ def index_document(
         _tracker.complete(document_id, len(chunks))
         logger.info("인덱싱 완료: %s → %d 청크", filename, len(chunks))
 
+        # 5. 지식 그래프 자동 추출 (백그라운드)
+        try:
+            from app.core.kg_extractor import KGExtractor
+            from app.core.kg_store import ensure_kg_collections, store_extraction_result
+            from app.core.vectordb import QdrantVectorDB
+
+            if isinstance(_vdb, QdrantVectorDB):
+                logger.info("  [5/5] 지식 그래프 엔티티 추출 시작: %s", filename)
+                extractor = KGExtractor()
+                chunk_dicts = [
+                    {"id": f"{document_id}-{c.metadata.get('chunk_index', i)}",
+                     "text": c.text, "metadata": c.metadata}
+                    for i, c in enumerate(chunks)
+                ]
+                kg_result = extractor.extract_from_document(
+                    chunks=chunk_dicts,
+                    document_id=document_id,
+                    document_name=filename,
+                )
+                if kg_result.entities:
+                    import asyncio
+                    try:
+                        loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        loop = None
+                    if loop and loop.is_running():
+                        # 이미 이벤트 루프가 실행 중 — 백그라운드 태스크로 예약
+                        asyncio.ensure_future(store_extraction_result(kg_result))
+                    else:
+                        asyncio.run(store_extraction_result(kg_result))
+                    logger.info("  지식 그래프: %d 엔티티, %d 관계 추출 완료",
+                                len(kg_result.entities), len(kg_result.relations))
+                else:
+                    logger.info("  지식 그래프: 추출된 엔티티 없음")
+        except Exception as kg_exc:
+            # KG 추출 실패는 인덱싱 결과에 영향 없음
+            logger.warning("  지식 그래프 추출 스킵: %s", kg_exc)
+
         return IndexResult(
             document_id=document_id,
             filename=filename,

@@ -1333,3 +1333,87 @@ export async function getUserStats(): Promise<{
   return fetchAPI("/api/admin/users/stats/summary");
 }
 
+// ── 지식 그래프 ──────────────────────────────────────────────────────────
+
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: string;
+  description?: string;
+  mention_count: number;
+  group: string;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  label: string;
+  relation_type: string;
+  weight: number;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: Record<string, number>;
+}
+
+export interface KGStats {
+  total_entities: number;
+  total_relations: number;
+  entities_by_type: Record<string, number>;
+}
+
+export interface EntitySearchResult {
+  id: string;
+  name: string;
+  type: string;
+  description?: string;
+  mention_count: number;
+  score: number;
+}
+
+export async function fetchKGGraph(
+  documentId?: string,
+  entityTypes?: string,
+  limit: number = 200,
+): Promise<GraphData> {
+  const params = new URLSearchParams();
+  if (documentId) params.set("document_id", documentId);
+  if (entityTypes) params.set("entity_types", entityTypes);
+  params.set("limit", String(limit));
+  return fetchAPI(`/kg/graph?${params.toString()}`);
+}
+
+export async function fetchKGStats(): Promise<KGStats> {
+  return fetchAPI("/kg/stats");
+}
+
+export async function extractKnowledgeGraph(documentId: string): Promise<unknown> {
+  return fetchAPI("/kg/extract", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ document_id: documentId }),
+  });
+}
+
+export async function searchKGEntities(
+  query: string,
+  entityTypes?: string,
+  limit: number = 20,
+): Promise<EntitySearchResult[]> {
+  const params = new URLSearchParams();
+  params.set("query", query);
+  if (entityTypes) params.set("entity_types", entityTypes);
+  params.set("limit", String(limit));
+  const result = await fetchAPI<{ query: string; results: EntitySearchResult[] }>(
+    `/kg/search?${params.toString()}`
+  );
+  return result.results;
+}
+
+export async function fetchKGEntityDetail(entityId: string): Promise<Record<string, unknown>> {
+  return fetchAPI(`/kg/entity/${entityId}`);
+}
+

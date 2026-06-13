@@ -158,3 +158,7 @@ app.include_router(admin_users.router, prefix="/api/admin/users", tags=["admin-u
 # ── 외부용 OpenAPI v1 (X-API-Key 인증 필요) ────────────────────────────────
 from app.api import v1
 app.include_router(v1.router, prefix="/api/v1", tags=["v1"])
+
+# ── 지식 그래프 ──────────────────────────────────────────────────────────────
+from app.api import knowledge_graph
+app.include_router(knowledge_graph.router)
