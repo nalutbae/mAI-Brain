@@ -12,12 +12,15 @@ import {
   listAvailableLLMProviders,
   listAvailableEmbeddingProviders,
   testProviderConnection,
+  getRerankerConfig,
+  updateRerankerConfig,
   type LLMProvider,
   type EmbeddingProvider,
   type LLMProviderConfig,
   type EmbeddingConfig,
   type ProviderDefaults,
   type ConnectionTestResult,
+  type RerankerConfig,
 } from "@/lib/api";
 
 // ── 프로바이더 아이콘 ──────────────────────────────────────────────────────
@@ -103,6 +106,15 @@ export default function SettingsPage() {
   // 원래 임베딩 프로바이더 (변경 감지용)
   const [originalEmbProvider, setOriginalEmbProvider] = useState<string>("local");
 
+  // ── Reranker ─────────────────────────────────────────────────────────
+  const [reranker, setReranker] = useState<RerankerConfig>({
+    enabled: true,
+    model: "BAAI/bge-reranker-v2-m3",
+    min_score: 0,
+  });
+  const [rerankerSaving, setRerankerSaving] = useState(false);
+  const [rerankerMessage, setRerankerMessage] = useState("");
+
   // ── Load data ────────────────────────────────────────────────────────
   useEffect(() => {
     loadData();
@@ -112,11 +124,12 @@ export default function SettingsPage() {
     setLlmLoading(true);
     setEmbLoading(true);
     try {
-      const [llmRes, availRes, embRes, availEmbRes] = await Promise.all([
+      const [llmRes, availRes, embRes, availEmbRes, rerankerRes] = await Promise.all([
         listLLMProviders(),
         listAvailableLLMProviders(),
         getEmbeddingProvider(),
         listAvailableEmbeddingProviders(),
+        getRerankerConfig(),
       ]);
       setProviders(llmRes.providers);
       setActiveId(llmRes.active_id);
@@ -129,6 +142,7 @@ export default function SettingsPage() {
       setEmbDim(embRes.dim);
       setOriginalEmbProvider(embRes.provider);
       setAvailableEmb(availEmbRes.providers);
+      setReranker(rerankerRes);
     } catch (e) {
       console.error("설정 로드 실패:", e);
     } finally {
@@ -226,6 +240,26 @@ export default function SettingsPage() {
       setEmbMessage("❌ 저장 실패: " + e.message);
     } finally {
       setEmbSaving(false);
+    }
+  }
+
+  // ── Reranker save ────────────────────────────────────────────────────
+  async function handleSaveReranker() {
+    setRerankerSaving(true);
+    setRerankerMessage("");
+    try {
+      const result = await updateRerankerConfig({
+        enabled: reranker.enabled,
+        model: reranker.model || undefined,
+        min_score: reranker.min_score,
+      });
+      setReranker({ enabled: result.enabled, model: result.model, min_score: result.min_score });
+      setRerankerMessage("✅ 리랭커 설정 저장 완료");
+      setTimeout(() => setRerankerMessage(""), 5000);
+    } catch (e: any) {
+      setRerankerMessage("❌ 저장 실패: " + e.message);
+    } finally {
+      setRerankerSaving(false);
     }
   }
 
@@ -694,6 +728,114 @@ export default function SettingsPage() {
               )}
             </div>
           )}
+        </div>
+      </section>
+
+      {/* ── 리랭커 설정 ──────────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-lg sm:text-xl font-semibold mb-4">🎯 리랭커 (Re-ranker)</h2>
+        <div className="p-4 sm:p-5 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 space-y-4">
+          {/* 설명 */}
+          <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
+            <p className="text-sm text-blue-800 dark:text-blue-200">
+              🔍 <strong>bge-reranker-v2-m3</strong> — 검색 결과를 질문과의 관련성 순으로 재정렬합니다.
+              초기 검색에서 더 많은 후보(20~30개)를 가져온 후, 리랭커가 최적의 5~12개만 선별합니다.
+              bge-m3 임베딩과 동일 계열로 한국어 성능이 우수합니다.
+            </p>
+          </div>
+
+          {/* 토글 */}
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium">리랭커 활성화</label>
+            <button
+              onClick={() => setReranker({ ...reranker, enabled: !reranker.enabled })}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                reranker.enabled ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-600"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  reranker.enabled ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* 모델명 */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5">리랭커 모델</label>
+            <input
+              type="text"
+              value={reranker.model}
+              onChange={(e) => setReranker({ ...reranker, model: e.target.value })}
+              disabled={!reranker.enabled}
+              className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px] disabled:opacity-50 disabled:bg-gray-100 dark:disabled:bg-gray-800"
+              placeholder="BAAI/bge-reranker-v2-m3"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              HuggingFace 모델명을 입력하세요. 기본값: BAAI/bge-reranker-v2-m3
+            </p>
+          </div>
+
+          {/* 최소 점수 */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5">최소 관련성 점수 (min_score)</label>
+            <input
+              type="number"
+              value={reranker.min_score}
+              onChange={(e) => setReranker({ ...reranker, min_score: Number(e.target.value) })}
+              disabled={!reranker.enabled}
+              step="0.1"
+              min="0"
+              max="1"
+              className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px] disabled:opacity-50 disabled:bg-gray-100 dark:disabled:bg-gray-800"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              이 점수 미만의 결과는 필터링됩니다 (0 = 필터링 없음, 범위: 0.0~1.0)
+            </p>
+          </div>
+
+          {/* 모드별 리랭크 설정 안내 */}
+          {reranker.enabled && (
+            <div className="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+              <p className="text-xs font-medium text-gray-600 dark:text-gray-300 mb-2">📋 모드별 리랭크 설정</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                <div className="p-2 bg-white dark:bg-gray-800 rounded border">
+                  <div className="font-medium">팩트</div>
+                  <div className="text-gray-500">20 → 5</div>
+                </div>
+                <div className="p-2 bg-white dark:bg-gray-800 rounded border">
+                  <div className="font-medium">요약</div>
+                  <div className="text-gray-500">25 → 8</div>
+                </div>
+                <div className="p-2 bg-white dark:bg-gray-800 rounded border">
+                  <div className="font-medium">컬럼</div>
+                  <div className="text-gray-500">30 → 12</div>
+                </div>
+                <div className="p-2 bg-white dark:bg-gray-800 rounded border">
+                  <div className="font-medium">추론</div>
+                  <div className="text-gray-500">30 → 10</div>
+                </div>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">초기 후보 수 → 리랭크 후 최종 결과 수</p>
+            </div>
+          )}
+
+          {/* 저장 버튼 */}
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={handleSaveReranker}
+              disabled={rerankerSaving}
+              className="px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50 min-h-[44px]"
+            >
+              {rerankerSaving ? "저장 중..." : "💾 리랭커 설정 저장"}
+            </button>
+            {rerankerMessage && (
+              <span className={`text-sm ${rerankerMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
+                {rerankerMessage}
+              </span>
+            )}
+          </div>
         </div>
       </section>
     </div>

@@ -362,9 +362,12 @@ async def test_provider_connection(req: ConnectionTestRequest):
 
 @router.get("/settings")
 def get_full_settings():
-    """전체 설정 조회 (LLM + 임베딩)."""
+    """전체 설정 조회 (LLM + 임베딩 + 리랭커)."""
+    from app.config import get_settings as _get_app_settings
+
     store = ProviderSettingsStore.get()
     settings = store.get_settings()
+    app_settings = _get_app_settings()
     return {
         "llm": {
             "providers": [_serialize_provider(p) for p in settings.llm_providers],
@@ -381,4 +384,97 @@ def get_full_settings():
             "model": settings.embedding.model,
             "dim": settings.embedding.dim,
         },
+        "reranker": {
+            "enabled": app_settings.reranker_enabled,
+            "model": app_settings.reranker_model,
+            "min_score": app_settings.reranker_min_score,
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# 리랭커 설정 엔드포인트
+# --------------------------------------------------------------------------- #
+
+class RerankerConfigUpdate(BaseModel):
+    """리랭커 설정 업데이트 요청"""
+    enabled: Optional[bool] = None
+    model: Optional[str] = None
+    min_score: Optional[float] = None
+
+
+@router.put("/settings/reranker")
+def update_reranker_config(req: RerankerConfigUpdate):
+    """리랭커 설정 업데이트.
+
+    .env 파일 대신 런타임 설정을 업데이트합니다.
+    설정은 프로세스 재시작 시 .env 값으로 초기화됩니다.
+    """
+    from app.config import Settings, get_settings
+    import os
+
+    settings = get_settings()
+
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not updates:
+        return {
+            "enabled": settings.reranker_enabled,
+            "model": settings.reranker_model,
+            "min_score": settings.reranker_min_score,
+            "message": "변경 사항 없음",
+        }
+
+    # .env 파일 업데이트 (런타임 + 영속화)
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", ".env")
+    env_lines: list[str] = []
+    env_keys = {
+        "enabled": "RERANKER_ENABLED",
+        "model": "RERANKER_MODEL",
+        "min_score": "RERANKER_MIN_SCORE",
+    }
+
+    # 기존 .env 읽기
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            env_lines = f.readlines()
+
+    # 업데이트할 키값 쌍
+    new_values: dict[str, str] = {}
+    for field, value in updates.items():
+        env_key = env_keys[field]
+        if field == "enabled":
+            new_values[env_key] = "true" if value else "false"
+        elif field == "min_score":
+            new_values[env_key] = str(value)
+        else:
+            new_values[env_key] = str(value)
+
+    # .env 업데이트
+    for env_key, env_value in new_values.items():
+        found = False
+        for i, line in enumerate(env_lines):
+            if line.startswith(f"{env_key}=") or line.startswith(f"{env_key} ="):
+                env_lines[i] = f"{env_key}={env_value}\n"
+                found = True
+                break
+        if not found:
+            env_lines.append(f"{env_key}={env_value}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(env_lines)
+
+    # 런타임 설정 업데이트 (캐시된 Settings 무효화)
+    from app.config import get_settings as _gs
+    _gs.cache_clear()
+
+    # 리랭커 싱글톤 리셋 (다음 요청 시 새 설정으로 초기화)
+    from app.core.reranker import reset_reranker
+    reset_reranker()
+
+    new_settings = get_settings()
+    return {
+        "enabled": new_settings.reranker_enabled,
+        "model": new_settings.reranker_model,
+        "min_score": new_settings.reranker_min_score,
+        "message": "리랭커 설정이 업데이트되었습니다.",
     }

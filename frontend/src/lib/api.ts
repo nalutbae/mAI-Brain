@@ -761,8 +761,33 @@ export async function testProviderConnection(data: {
 export async function getFullSettings(): Promise<{
   llm: { providers: LLMProviderConfig[]; active_id: string | null };
   embedding: EmbeddingConfig;
+  reranker: RerankerConfig;
 }> {
   return fetchAPI("/api/settings/settings");
+}
+
+// ── 리랭커 설정 ──────────────────────────────────────────────────────────
+
+export interface RerankerConfig {
+  enabled: boolean;
+  model: string;
+  min_score: number;
+}
+
+export async function getRerankerConfig(): Promise<RerankerConfig> {
+  const settings = await fetchAPI<{ llm: unknown; embedding: unknown; reranker: RerankerConfig }>("/api/settings/settings");
+  return settings.reranker;
+}
+
+export async function updateRerankerConfig(data: {
+  enabled?: boolean;
+  model?: string;
+  min_score?: number;
+}): Promise<RerankerConfig & { message: string }> {
+  return fetchAPI("/api/settings/settings/reranker", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
 }
 
 // ── 세션 내보내기 ──────────────────────────────────────────────────────

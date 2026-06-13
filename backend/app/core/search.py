@@ -1,9 +1,11 @@
 """mAI-Brain AI 챗봇 — 하이브리드 검색 모듈
 
-질문 임베딩(dense+sparse) → 벡터 DB 검색 → SearchResult 반환.
+질문 임베딩(dense+sparse) → 벡터 DB 검색 → 리랭킹(선택) → SearchResult 반환.
 
 핵심 설계:
 - 검색 모드별 top-k 조절: 팩트(5), 요약(8), 컬럼(18), 추론(15)
+- 리랭커 활성화 시 초기 검색 후보를 늘려 리랭크 후 최종 k개 선택
+  팩트(20→5), 요약(25→8), 컬럼(30→12), 추론(30→10)
 - 검색 결과에 메타데이터(출처, 점수, 페이지) 포함
 - VectorDBProvider를 통해 Qdrant/Chroma/PGVector 전환 가능
 - sparse 벡터 지원 여부에 따라 검색 방식 자동 분기
@@ -17,6 +19,11 @@ from typing import Optional
 
 from app.config import ChatMode, get_settings
 from app.core.embedding import EmbeddingResult, get_embedding_provider
+from app.core.reranker import (
+    RERANK_FINAL_K,
+    RERANK_INITIAL_K,
+    get_reranker,
+)
 from app.core.vectordb import VectorDBProvider, get_vector_db
 from app.models.chat import SearchHit
 
@@ -30,6 +37,9 @@ logger = logging.getLogger(__name__)
 def _get_top_k(mode: ChatMode) -> int:
     """검색 모드에 따른 top-k 반환.
 
+    리랭커가 활�성화된 경우 초기 후보를 늘리기 위해
+    RERANK_INITIAL_K 값을 사용합니다.
+
     Args:
         mode: 채팅 모드 (fact/summary/column/reasoning/creative)
 
@@ -37,12 +47,38 @@ def _get_top_k(mode: ChatMode) -> int:
         검색 결과 수 (creative는 0 = 검색 안 함)
     """
     settings = get_settings()
+
+    if settings.reranker_enabled:
+        # 리랭커 활성화 → 더 많은 후보를 검색한 후 리랭크
+        return RERANK_INITIAL_K.get(mode, settings.top_k_fact)
+
+    # 리랭커 비활성화 → 기존 top-k 그대로 사용
     mode_top_k = {
         ChatMode.FACT: settings.top_k_fact,
         ChatMode.SUMMARY: settings.top_k_summary,
         ChatMode.COLUMN: settings.top_k_column,
         ChatMode.REASONING: settings.top_k_reasoning,
-        ChatMode.CREATIVE: 0,  # 검색하지 않음
+        ChatMode.CREATIVE: 0,
+    }
+    return mode_top_k.get(mode, settings.top_k_fact)
+
+
+def _get_final_k(mode: ChatMode) -> int:
+    """리랭크 후 최종 반환할 결과 수.
+
+    리랭커 비활성화 시 _get_top_k와 동일.
+    """
+    settings = get_settings()
+
+    if settings.reranker_enabled:
+        return RERANK_FINAL_K.get(mode, settings.top_k_fact)
+
+    mode_top_k = {
+        ChatMode.FACT: settings.top_k_fact,
+        ChatMode.SUMMARY: settings.top_k_summary,
+        ChatMode.COLUMN: settings.top_k_column,
+        ChatMode.REASONING: settings.top_k_reasoning,
+        ChatMode.CREATIVE: 0,
     }
     return mode_top_k.get(mode, settings.top_k_fact)
 
@@ -76,12 +112,13 @@ def hybrid_search(
     vdb: Optional[VectorDBProvider] = None,
     collection_name: Optional[str] = None,
 ) -> SearchResult:
-    """벡터 DB 검색 수행.
+    """벡터 DB 검색 + 리랭킹 수행.
 
     파이프라인:
     1. 질문 임베딩 (dense + sparse) 생성
-    2. VectorDBProvider.search() 호출
-    3. 검색 결과 → SearchHit 리스트 변환
+    2. VectorDBProvider.search() 호출 (리랭커 활성화 시 후보 많이 검색)
+    3. 리랭커 재정렬 (활성화 시)
+    4. 검색 결과 → SearchHit 리스트 변환
 
     Args:
         query: 사용자 질문
@@ -93,10 +130,12 @@ def hybrid_search(
     Returns:
         SearchResult: 검색 결과 + 메타데이터
     """
-    top_k = _get_top_k(mode)
+    initial_k = _get_top_k(mode)
+    final_k = _get_final_k(mode)
+
     logger.info(
-        "벡터 DB 검색: query='%s', mode=%s, top_k=%d",
-        query[:50], mode.value, top_k,
+        "벡터 DB 검색: query='%s', mode=%s, initial_k=%d, final_k=%d",
+        query[:50], mode.value, initial_k, final_k,
     )
 
     # 1. 질문 임베딩 생성
@@ -120,7 +159,7 @@ def hybrid_search(
     results = _vdb.search(
         query_dense=query_dense,
         query_sparse=query_sparse,
-        limit=top_k,
+        limit=initial_k,
         collection_name=collection_name,
     )
 
@@ -135,6 +174,25 @@ def hybrid_search(
             chunk_index=payload.get("chunk_index"),
             page=payload.get("page"),
         ))
+
+    # 4. 리랭킹 (활성화 시)
+    reranker = get_reranker()
+    if reranker is not None and hits:
+        min_score = get_settings().reranker_min_score
+        hits = reranker.rerank(
+            query=query,
+            hits=hits,
+            top_k=final_k,
+            min_score=min_score,
+        )
+        logger.info(
+            "리랭크 완료: %d→%d개 (mode=%s)",
+            len(results), len(hits), mode.value,
+        )
+    elif initial_k != final_k and hits:
+        # 리랭커 비활성화지만 initial_k != final_k인 경우 잘라내기
+        # (정상적으로는 이 경로를 타지 않음 — 리랭커 비활성화 시 initial_k == final_k)
+        hits = hits[:final_k]
 
     logger.info("검색 완료: %d개 결과 (mode=%s)", len(hits), mode.value)
 

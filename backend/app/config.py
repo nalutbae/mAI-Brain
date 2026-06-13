@@ -105,6 +105,11 @@ class Settings(BaseSettings):
     top_k_column: int = 18
     top_k_reasoning: int = 15
 
+    # 리랭커 설정
+    reranker_enabled: bool = True
+    reranker_model: str = "BAAI/bge-reranker-v2-m3"
+    reranker_min_score: float = 0.0
+
     # 음성 인터페이스 (선택적)
     voice_whisper_api_key: str = ""
     voice_elevenlabs_api_key: str = ""
