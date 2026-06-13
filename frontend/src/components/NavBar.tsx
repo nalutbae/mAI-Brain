@@ -9,7 +9,7 @@ import ThemeToggle from "./ThemeToggle";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 // 관리자 전용 경로
-const ADMIN_PATHS = ["/admin", "/admin/api-keys", "/admin/chunking", "/admin/prompts", "/admin/users"];
+const ADMIN_PATHS = ["/admin", "/admin/api-keys", "/admin/chunking", "/admin/prompts", "/admin/users", "/admin/workspaces", "/admin/settings"];
 
 // 로그인 필요 경로 (모든 페이지)
 // 로그인 없이 접근 가능: /login, /api/v1 (외부 API)
@@ -56,7 +56,7 @@ export default function NavBar() {
   // 로그인한 사용자: role에 따라 메뉴 필터링
   const allLinks = [
     { href: "/", label: "💬 채팅", active: pathname === "/", adminOnly: false },
-    { href: "/workspaces", label: "📁 워크스페이스", active: pathname === "/workspaces", adminOnly: false },
+    { href: "/admin/workspaces", label: "📁 워크스페이스", active: pathname === "/admin/workspaces", adminOnly: true },
     { href: "/sessions", label: "📋 대화 목록", active: pathname === "/sessions", adminOnly: false },
     { href: "/cross-reasoning", label: "🔀 교차추론", active: pathname === "/cross-reasoning", adminOnly: false },
     { href: "/knowledge-graph", label: "🕸️ 지식그래프", active: pathname === "/knowledge-graph", adminOnly: false },
@@ -67,7 +67,7 @@ export default function NavBar() {
     { href: "/admin/users", label: "👥 사용자", active: pathname === "/admin/users", adminOnly: true },
     { href: "/evaluation", label: "📊 평가", active: pathname === "/evaluation", adminOnly: true },
     { href: "/feedback", label: "🔄 피드백", active: pathname === "/feedback", adminOnly: false },
-    { href: "/settings", label: "⚙️ 설정", active: pathname === "/settings", adminOnly: true },
+    { href: "/admin/settings", label: "⚙️ 설정", active: pathname === "/admin/settings", adminOnly: true },
     { href: `${API_BASE_URL}/scalar`, label: "📖 API 문서", active: false, adminOnly: true, external: true },
   ];
 
