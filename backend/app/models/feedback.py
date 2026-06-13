@@ -80,6 +80,7 @@ class Feedback(BaseModel):
 class FeedbackCreate(BaseModel):
     """피드백 생성 요청."""
     session_id: str = ""
+    message_index: int = 0
     query: str = ""
     answer: str = ""
     feedback_type: FeedbackType

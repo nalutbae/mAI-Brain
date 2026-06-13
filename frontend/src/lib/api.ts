@@ -575,6 +575,7 @@ export interface Feedback {
 
 export interface FeedbackCreate {
   session_id?: string;
+  message_index?: number;
   query?: string;
   answer?: string;
   feedback_type: FeedbackType;

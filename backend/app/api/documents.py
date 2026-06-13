@@ -17,7 +17,7 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile, Query
 
 from app.config import get_settings
 from app.core.vectordb import get_vector_db
@@ -381,7 +381,7 @@ async def delete_document(document_id: str):
 # --------------------------------------------------------------------------- #
 
 @router.post("/upload-url", response_model=DocumentUploadResponse)
-async def upload_url(url: str):
+async def upload_url(url: str = Query(..., description="인덱싱할 웹페이지 URL")):
     """URL 웹페이지를 다운로드하여 인덱싱합니다.
 
     웹페이지의 본문 텍스트를 추출하여 Qdrant에 저장합니다.
