@@ -4,10 +4,12 @@ import { useState, useEffect, useCallback } from "react";
 import { AdminGuard } from "../../../components/AuthGuard";
 import {
   ChunkingProfile,
+  ChunkingProfileUpdate,
   ChunkingStrategy,
   ChunkPreview,
   listChunkingProfiles,
   createChunkingProfile,
+  updateChunkingProfile,
   deleteChunkingProfile,
   setDefaultChunkingProfile,
   previewChunking,
@@ -49,13 +51,126 @@ function ProfileCard({
   onSetDefault,
   onDelete,
   onPreview,
+  onEdit,
+  editingId,
+  editData,
+  editLoading,
+  onEditChange,
+  onEditSave,
+  onEditCancel,
 }: {
   profile: ChunkingProfile;
   onSetDefault: (id: string) => void;
   onDelete: (id: string) => void;
   onPreview: (profile: ChunkingProfile) => void;
+  onEdit: (profile: ChunkingProfile) => void;
+  editingId: string | null;
+  editData: ChunkingProfileUpdate;
+  editLoading: boolean;
+  onEditChange: (field: keyof ChunkingProfileUpdate, value: string | number) => void;
+  onEditSave: () => void;
+  onEditCancel: () => void;
 }) {
   const isBuiltin = profile.id.startsWith("builtin_");
+  const isEditing = editingId === profile.id;
+
+  if (isEditing) {
+    return (
+      <div className={`bg-white dark:bg-gray-900 rounded-xl border ${
+        profile.is_default
+          ? "border-blue-400 dark:border-blue-500 ring-1 ring-blue-200 dark:ring-blue-800"
+          : "border-gray-200 dark:border-gray-700"
+      } p-4`}>
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">이름 *</label>
+            <input
+              type="text"
+              value={editData.name ?? ""}
+              onChange={(e) => onEditChange("name", e.target.value)}
+              className="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">설명</label>
+            <input
+              type="text"
+              value={editData.description ?? ""}
+              onChange={(e) => onEditChange("description", e.target.value)}
+              className="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">청킹 전략</label>
+            <select
+              value={editData.strategy ?? "fixed"}
+              onChange={(e) => onEditChange("strategy", e.target.value)}
+              className="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+            >
+              {Object.entries(STRATEGY_LABELS).map(([key, info]) => (
+                <option key={key} value={key}>{info.label} — {info.desc}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">청크 크기</label>
+              <input
+                type="number"
+                value={editData.chunk_size ?? 700}
+                onChange={(e) => onEditChange("chunk_size", Number(e.target.value))}
+                className="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">오버랩</label>
+              <input
+                type="number"
+                value={editData.chunk_overlap ?? 150}
+                onChange={(e) => onEditChange("chunk_overlap", Number(e.target.value))}
+                className="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">최소 크기</label>
+              <input
+                type="number"
+                value={editData.min_chunk_size ?? 50}
+                onChange={(e) => onEditChange("min_chunk_size", Number(e.target.value))}
+                className="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">분할 패턴 (정규식)</label>
+            <input
+              type="text"
+              value={editData.separator_pattern ?? ""}
+              onChange={(e) => onEditChange("separator_pattern", e.target.value)}
+              placeholder="예: (?=제\\d+조) 또는 \\n\\s*\\n"
+              className="w-full px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-white text-sm font-mono"
+            />
+          </div>
+          <div className="flex items-center gap-2 pt-2 border-t border-gray-100 dark:border-gray-800">
+            <button
+              onClick={onEditSave}
+              disabled={editLoading || !(editData.name?.trim())}
+              className="px-4 py-1.5 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            >
+              {editLoading ? "저장 중..." : "저장"}
+            </button>
+            <button
+              onClick={onEditCancel}
+              disabled={editLoading}
+              className="px-4 py-1.5 text-xs font-medium text-gray-600 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`bg-white dark:bg-gray-900 rounded-xl border ${
@@ -118,12 +233,20 @@ function ProfileCard({
           </button>
         )}
         {!isBuiltin && (
-          <button
-            onClick={() => onDelete(profile.id)}
-            className="px-3 py-1 text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 bg-red-50 dark:bg-red-900/30 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors ml-auto"
-          >
-            삭제
-          </button>
+          <>
+            <button
+              onClick={() => onEdit(profile)}
+              className="px-3 py-1 text-xs font-medium text-amber-600 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 bg-amber-50 dark:bg-amber-900/30 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors"
+            >
+              편집
+            </button>
+            <button
+              onClick={() => onDelete(profile.id)}
+              className="px-3 py-1 text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 bg-red-50 dark:bg-red-900/30 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/50 transition-colors ml-auto"
+            >
+              삭제
+            </button>
+          </>
         )}
       </div>
     </div>
@@ -232,6 +355,58 @@ function ChunkingContent() {
 
   // 새 프로파일 폼 상태
   const [showCreateForm, setShowCreateForm] = useState(false);
+
+  // 편집 상태
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editData, setEditData] = useState<ChunkingProfileUpdate>({});
+  const [editLoading, setEditLoading] = useState(false);
+
+  const handleEdit = (profile: ChunkingProfile) => {
+    setEditingId(profile.id);
+    setEditData({
+      name: profile.name,
+      description: profile.description || "",
+      strategy: profile.strategy,
+      chunk_size: profile.chunk_size,
+      chunk_overlap: profile.chunk_overlap,
+      min_chunk_size: profile.min_chunk_size,
+      separator_pattern: profile.separator_pattern || "",
+    });
+  };
+
+  const handleEditChange = (field: keyof ChunkingProfileUpdate, value: string | number) => {
+    setEditData((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleEditSave = async () => {
+    if (!editingId || !editData.name?.trim()) return;
+    setEditLoading(true);
+    try {
+      await updateChunkingProfile(editingId, {
+        name: editData.name,
+        description: editData.description,
+        strategy: editData.strategy as ChunkingStrategy | undefined,
+        chunk_size: editData.chunk_size,
+        chunk_overlap: editData.chunk_overlap,
+        min_chunk_size: editData.min_chunk_size,
+        separator_pattern: editData.separator_pattern,
+      });
+      setSuccess("프로파일이 수정되었습니다.");
+      setEditingId(null);
+      setEditData({});
+      await loadProfiles();
+    } catch (e: any) {
+      setError(e?.message || "프로파일 수정에 실패했습니다.");
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  const handleEditCancel = () => {
+    setEditingId(null);
+    setEditData({});
+  };
+
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
   const [newStrategy, setNewStrategy] = useState<ChunkingStrategy>("fixed");
@@ -407,6 +582,13 @@ function ChunkingContent() {
                   onSetDefault={handleSetDefault}
                   onDelete={handleDelete}
                   onPreview={handlePreview}
+                  onEdit={handleEdit}
+                  editingId={editingId}
+                  editData={editData}
+                  editLoading={editLoading}
+                  onEditChange={handleEditChange}
+                  onEditSave={handleEditSave}
+                  onEditCancel={handleEditCancel}
                 />
               ))}
             </div>
