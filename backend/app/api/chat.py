@@ -121,6 +121,7 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
                 mode=request.mode,
                 session_id=session_id,
                 collection_name=collection_name,
+                query_expansion=request.query_expansion,
             )
         except Exception as exc:
             logger.error("검색 오류: %s", exc, exc_info=True)

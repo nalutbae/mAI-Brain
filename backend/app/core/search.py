@@ -111,14 +111,16 @@ def hybrid_search(
     session_id: Optional[str] = None,
     vdb: Optional[VectorDBProvider] = None,
     collection_name: Optional[str] = None,
+    query_expansion: Optional[str] = None,
 ) -> SearchResult:
     """벡터 DB 검색 + 리랭킹 수행.
 
     파이프라인:
-    1. 질문 임베딩 (dense + sparse) 생성
-    2. VectorDBProvider.search() 호출 (리랭커 활성화 시 후보 많이 검색)
-    3. 리랭커 재정렬 (활성화 시)
-    4. 검색 결과 → SearchHit 리스트 변환
+    1. (선택) 쿼리 확장 — query_expansion 파라미터가 설정된 경우
+    2. 질문 임베딩 (dense + sparse) 생성
+    3. VectorDBProvider.search() 호출 (리랭커 활성화 시 후보 많이 검색)
+    4. 리랭커 재정렬 (활성화 시)
+    5. 검색 결과 → SearchHit 리스트 변환
 
     Args:
         query: 사용자 질문
@@ -126,10 +128,57 @@ def hybrid_search(
         session_id: 세션 ID (향후 세션별 필터링용, 현재 미사용)
         vdb: 벡터 DB 프로바이더 (None이면 기본 인스턴스)
         collection_name: 검색 대상 컬렉션 이름 (None이면 기본 컬렉션)
+        query_expansion: 쿼리 확장 전략
+            "multi_query" | "hyde" | "korean_synonyms" | "auto" | None
 
     Returns:
         SearchResult: 검색 결과 + 메타데이터
     """
+    # ── 쿼리 확장 (선택) ─────────────────────────────────────────────── #
+    # query_expansion이 설정되면 확장된 쿼리들로 다중 검색 후 결과 병합
+    if query_expansion:
+        from app.core.query_expansion import QueryExpansionStrategy, get_query_expander
+
+        try:
+            strategy = QueryExpansionStrategy(query_expansion)
+        except ValueError:
+            logger.warning(
+                "알 수 없는 쿼리 확장 전략: %s — 확장 없이 검색", query_expansion,
+            )
+            strategy = QueryExpansionStrategy.NONE
+
+        if strategy != QueryExpansionStrategy.NONE:
+            expander = get_query_expander()
+            merged_hits, expansion = expander.expand_and_search(
+                query=query,
+                strategy=strategy,
+                mode=mode,
+                session_id=session_id,
+                collection_name=collection_name,
+            )
+            logger.info(
+                "쿼리 확장 검색 완료: 전략=%s, 확장=%d개, 결과=%d개",
+                expansion.strategy_used.value,
+                len(expansion.expanded_queries),
+                len(merged_hits),
+            )
+            # 리랭킹 적용 (활성화 시)
+            final_k = _get_final_k(mode)
+            reranker = get_reranker()
+            if reranker is not None and merged_hits:
+                min_score = get_settings().reranker_min_score
+                merged_hits = reranker.rerank(
+                    query=query,
+                    hits=merged_hits,
+                    top_k=final_k,
+                    min_score=min_score,
+                )
+            elif len(merged_hits) > final_k:
+                merged_hits = merged_hits[:final_k]
+
+            return SearchResult(hits=merged_hits, query=query, mode=mode)
+
+    # ── 일반 검색 파이프라인 ──────────────────────────────────────────── #
     initial_k = _get_top_k(mode)
     final_k = _get_final_k(mode)
 

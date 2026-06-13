@@ -112,6 +112,7 @@ async def stream_chat(request: ChatRequest, req: Request):
                 mode=request.mode,
                 session_id=session_id,
                 collection_name=collection_name,
+                query_expansion=request.query_expansion,
             )
         except Exception as exc:
             logger.error("검색 오류: %s", exc, exc_info=True)

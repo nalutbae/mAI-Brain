@@ -60,6 +60,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="워크스페이스 ID (커스텀 프롬프트 사용 시 전달)",
     )
+    query_expansion: Optional[str] = Field(
+        default=None,
+        description="쿼리 확장 전략: multi_query, hyde, korean_synonyms, auto, none",
+    )
 
 
 # --------------------------------------------------------------------------- #
