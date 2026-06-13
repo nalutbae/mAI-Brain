@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     reranker_min_score: float = 0.0
 
+    # OCR 설정
+    ocr_provider: str = "surya"  # "surya" | "tesseract" | "none"
+    ocr_languages: list[str] = ["ko", "en"]  # surya 언어 코드
+    ocr_dpi: int = 200  # PDF→이미지 렌더링 DPI
+    ocr_max_pages: int = 500  # OCR 처리 최대 페이지 수
+    ocr_enable_table: bool = True  # 표 추출 활성화
+
     # 음성 인터페이스 (선택적)
     voice_whisper_api_key: str = ""
     voice_elevenlabs_api_key: str = ""

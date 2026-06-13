@@ -14,6 +14,8 @@ import {
   testProviderConnection,
   getRerankerConfig,
   updateRerankerConfig,
+  getOcrConfig,
+  updateOcrConfig,
   type LLMProvider,
   type EmbeddingProvider,
   type LLMProviderConfig,
@@ -115,6 +117,17 @@ export default function SettingsPage() {
   const [rerankerSaving, setRerankerSaving] = useState(false);
   const [rerankerMessage, setRerankerMessage] = useState("");
 
+  // ── OCR ──────────────────────────────────────────────────────────────
+  const [ocr, setOcr] = useState({
+    provider: "surya" as "surya" | "tesseract" | "none",
+    languages: ["ko", "en"],
+    dpi: 200,
+    maxPages: 500,
+    enableTable: true,
+  });
+  const [ocrSaving, setOcrSaving] = useState(false);
+  const [ocrMessage, setOcrMessage] = useState("");
+
   // ── Load data ────────────────────────────────────────────────────────
   useEffect(() => {
     loadData();
@@ -124,12 +137,13 @@ export default function SettingsPage() {
     setLlmLoading(true);
     setEmbLoading(true);
     try {
-      const [llmRes, availRes, embRes, availEmbRes, rerankerRes] = await Promise.all([
+      const [llmRes, availRes, embRes, availEmbRes, rerankerRes, ocrRes] = await Promise.all([
         listLLMProviders(),
         listAvailableLLMProviders(),
         getEmbeddingProvider(),
         listAvailableEmbeddingProviders(),
         getRerankerConfig(),
+        getOcrConfig(),
       ]);
       setProviders(llmRes.providers);
       setActiveId(llmRes.active_id);
@@ -143,6 +157,13 @@ export default function SettingsPage() {
       setOriginalEmbProvider(embRes.provider);
       setAvailableEmb(availEmbRes.providers);
       setReranker(rerankerRes);
+      setOcr({
+        provider: ocrRes.provider as "surya" | "tesseract" | "none",
+        languages: ocrRes.languages,
+        dpi: ocrRes.dpi,
+        maxPages: ocrRes.max_pages,
+        enableTable: ocrRes.enable_table,
+      });
     } catch (e) {
       console.error("설정 로드 실패:", e);
     } finally {
@@ -833,6 +854,131 @@ export default function SettingsPage() {
             {rerankerMessage && (
               <span className={`text-sm ${rerankerMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
                 {rerankerMessage}
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ── OCR 설정 ─────────────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-lg sm:text-xl font-semibold mb-4">📄 OCR (광학 문자 인식)</h2>
+        <div className="p-4 sm:p-5 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 space-y-4">
+          {/* 설명 */}
+          <div className="p-3 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-700 rounded-lg">
+            <p className="text-sm text-purple-800 dark:text-purple-200">
+              📝 스캔 문서, 이미지 PDF, 법원 판결문 등에서 한국어 텍스트를 추출합니다.
+              <strong> surya-ocr</strong>(한국어 고정밀) → <strong>tesseract</strong>(폴백) 순서로 동작합니다.
+            </p>
+          </div>
+
+          {/* OCR 엔진 선택 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">OCR 엔진</label>
+            <select
+              value={ocr.provider}
+              onChange={(e) => setOcr({ ...ocr, provider: e.target.value as "surya" | "tesseract" | "none" })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            >
+              <option value="surya">surya-ocr (한국어 고정밀, GPU 가속)</option>
+              <option value="tesseract">tesseract (폴백, CPU)</option>
+              <option value="none">비활성화</option>
+            </select>
+          </div>
+
+          {/* DPI 설정 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              렌더링 DPI <span className="text-gray-400">(기본: 200)</span>
+            </label>
+            <input
+              type="number"
+              min={72}
+              max={600}
+              value={ocr.dpi}
+              onChange={(e) => setOcr({ ...ocr, dpi: parseInt(e.target.value) || 200 })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            />
+            <p className="mt-1 text-xs text-gray-500">높을수록 정밀하지만 메모리 사용량 증가 (권장: 150~300)</p>
+          </div>
+
+          {/* 최대 페이지 수 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              최대 OCR 페이지 <span className="text-gray-400">(기본: 500)</span>
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={5000}
+              value={ocr.maxPages}
+              onChange={(e) => setOcr({ ...ocr, maxPages: parseInt(e.target.value) || 500 })}
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100"
+            />
+          </div>
+
+          {/* 표 추출 토글 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">표 추출 활성화</p>
+              <p className="text-xs text-gray-500">camelot/img2table로 PDF 내 표를 마크다운으로 변환</p>
+            </div>
+            <button
+              onClick={() => setOcr({ ...ocr, enableTable: !ocr.enableTable })}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                ocr.enableTable ? "bg-purple-600" : "bg-gray-300 dark:bg-gray-600"
+              }`}
+            >
+              <span
+                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                  ocr.enableTable ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* OCR 언어 */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">인식 언어</label>
+            <div className="flex gap-2">
+              {ocr.languages.map((lang, i) => (
+                <span key={i} className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-sm">
+                  {lang === "ko" ? "🇰🇷 한국어" : lang === "en" ? "🇺🇸 영어" : lang}
+                </span>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-gray-500">surya-ocr은 90+ 언어 지원. 설정에서 변경 가능.</p>
+          </div>
+
+          {/* 저장 버튼 */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={async () => {
+                setOcrSaving(true);
+                setOcrMessage("");
+                try {
+                  const result = await updateOcrConfig({
+                    provider: ocr.provider,
+                    languages: ocr.languages,
+                    dpi: ocr.dpi,
+                    max_pages: ocr.maxPages,
+                    enable_table: ocr.enableTable,
+                  });
+                  setOcrMessage(`✅ ${result.message}`);
+                } catch (e: any) {
+                  setOcrMessage(`❌ 저장 실패: ${e.message}`);
+                } finally {
+                  setOcrSaving(false);
+                }
+              }}
+              disabled={ocrSaving}
+              className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
+            >
+              {ocrSaving ? "저장 중..." : "OCR 설정 저장"}
+            </button>
+            {ocrMessage && (
+              <span className={`text-sm ${ocrMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
+                {ocrMessage}
               </span>
             )}
           </div>

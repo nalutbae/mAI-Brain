@@ -389,6 +389,13 @@ def get_full_settings():
             "model": app_settings.reranker_model,
             "min_score": app_settings.reranker_min_score,
         },
+        "ocr": {
+            "provider": app_settings.ocr_provider,
+            "languages": app_settings.ocr_languages,
+            "dpi": app_settings.ocr_dpi,
+            "max_pages": app_settings.ocr_max_pages,
+            "enable_table": app_settings.ocr_enable_table,
+        },
     }
 
 
@@ -477,4 +484,94 @@ def update_reranker_config(req: RerankerConfigUpdate):
         "model": new_settings.reranker_model,
         "min_score": new_settings.reranker_min_score,
         "message": "리랭커 설정이 업데이트되었습니다.",
+    }
+
+
+# --------------------------------------------------------------------------- #
+# OCR 설정 엔드포인트
+# --------------------------------------------------------------------------- #
+
+class OcrConfigUpdate(BaseModel):
+    """OCR 설정 업데이트 요청"""
+    provider: Optional[str] = None  # "surya" | "tesseract" | "none"
+    languages: Optional[list[str]] = None  # ["ko", "en"]
+    dpi: Optional[int] = None
+    max_pages: Optional[int] = None
+    enable_table: Optional[bool] = None
+
+
+@router.put("/settings/ocr")
+def update_ocr_config(req: OcrConfigUpdate):
+    """OCR 설정 업데이트.
+
+    provider: "surya" (기본, 한국어 고정밀), "tesseract" (폴백), "none" (비활성화)
+    .env 파일에 영속화하고 런타임 설정도 갱신합니다.
+    """
+    from app.config import Settings, get_settings
+    import os
+
+    settings = get_settings()
+
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    if not updates:
+        return {
+            "provider": settings.ocr_provider,
+            "languages": settings.ocr_languages,
+            "dpi": settings.ocr_dpi,
+            "max_pages": settings.ocr_max_pages,
+            "enable_table": settings.ocr_enable_table,
+            "message": "변경 사항 없음",
+        }
+
+    # .env 파일 업데이트
+    env_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", ".env")
+    env_lines: list[str] = []
+
+    env_keys = {
+        "provider": "OCR_PROVIDER",
+        "languages": "OCR_LANGUAGES",
+        "dpi": "OCR_DPI",
+        "max_pages": "OCR_MAX_PAGES",
+        "enable_table": "OCR_ENABLE_TABLE",
+    }
+
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            env_lines = f.readlines()
+
+    new_values: dict[str, str] = {}
+    for field, value in updates.items():
+        env_key = env_keys[field]
+        if isinstance(value, bool):
+            new_values[env_key] = "true" if value else "false"
+        elif isinstance(value, list):
+            new_values[env_key] = ",".join(value)
+        else:
+            new_values[env_key] = str(value)
+
+    for env_key, env_value in new_values.items():
+        found = False
+        for i, line in enumerate(env_lines):
+            if line.startswith(f"{env_key}=") or line.startswith(f"{env_key} ="):
+                env_lines[i] = f"{env_key}={env_value}\n"
+                found = True
+                break
+        if not found:
+            env_lines.append(f"{env_key}={env_value}\n")
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(env_lines)
+
+    # 런타임 설정 업데이트
+    from app.config import get_settings as _gs
+    _gs.cache_clear()
+
+    new_settings = get_settings()
+    return {
+        "provider": new_settings.ocr_provider,
+        "languages": new_settings.ocr_languages,
+        "dpi": new_settings.ocr_dpi,
+        "max_pages": new_settings.ocr_max_pages,
+        "enable_table": new_settings.ocr_enable_table,
+        "message": "OCR 설정이 업데이트되었습니다.",
     }

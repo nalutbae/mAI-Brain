@@ -806,6 +806,34 @@ export async function updateRerankerConfig(data: {
   });
 }
 
+// ── OCR 설정 ──────────────────────────────────────────────────────────────
+
+export interface OcrConfig {
+  provider: "surya" | "tesseract" | "none";
+  languages: string[];
+  dpi: number;
+  max_pages: number;
+  enable_table: boolean;
+}
+
+export async function getOcrConfig(): Promise<OcrConfig> {
+  const settings = await fetchAPI<{ llm: unknown; embedding: unknown; reranker: unknown; ocr: OcrConfig }>("/api/settings/settings");
+  return settings.ocr;
+}
+
+export async function updateOcrConfig(data: {
+  provider?: string;
+  languages?: string[];
+  dpi?: number;
+  max_pages?: number;
+  enable_table?: boolean;
+}): Promise<OcrConfig & { message: string }> {
+  return fetchAPI("/api/settings/settings/ocr", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
 // ── 세션 내보내기 ──────────────────────────────────────────────────────
 
 export type ExportFormat = "markdown" | "json" | "csv";
