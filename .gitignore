@@ -20,9 +20,11 @@ data/provider_settings.json
 data/api_keys.json
 data/users.db
 qdrant_storage/
+docker_volume/
 logs/
 *.db
 *.sqlite
+
 
 # OS
 .DS_Store

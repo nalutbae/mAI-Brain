@@ -87,10 +87,27 @@ class LocalBGEM3(EmbeddingProvider):
         self._device = self._detect_device()
         logger.info("LocalBGEM3 초기화: model=%s, device=%s", model_name, self._device)
 
+        # ONNX 모델(2.2GB) 불필요 다운로드 방지
+        # 1) ignore_patterns로 ONNX 제외하여 snapshot_download 실행
+        # 2) 반환된 로컬 경로를 BGEM3FlagModel에 전달 → 내부 snapshot_download 스킵
+        import os
+        from huggingface_hub import snapshot_download as _snapshot_download
+
+        local_model_path = model_name
+        if not os.path.isdir(model_name):  # HF repo ID인 경우만 사전 다운로드
+            try:
+                local_model_path = _snapshot_download(
+                    repo_id=model_name,
+                    ignore_patterns=["onnx/*", "flax_model.msgpack", "rust_model.ot", "tf_model.h5"],
+                )
+                logger.info("HuggingFace 캐시 사전 다운로드 완료 (ONNX 제외): %s", local_model_path)
+            except Exception as e:
+                logger.warning("HuggingFace 캐시 사전 다운로드 실패 (무시): %s", e)
+
         from FlagEmbedding import BGEM3FlagModel  # noqa: PLC0415
 
         self._model = BGEM3FlagModel(
-            model_name,
+            local_model_path,  # 로컬 경로 전달 → 내부 snapshot_download 스킵
             use_fp16=True,
             device=self._device,
         )
