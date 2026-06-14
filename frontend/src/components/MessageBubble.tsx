@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import { submitFeedback, type FeedbackType, type FeedbackTag } from "../lib/api";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -29,64 +32,20 @@ interface MessageBubbleProps {
 
 // ── Inline citation renderer ──────────────────────────────────────────────
 
-/** [[N]] 마커를 파싱하여 인용 뱃지가 인라인으로 포함된 React 노드로 변환 */
-function renderContentWithCitations(
+/** [[N]] 마커를 치환하여 인용 뱃지가 인라인으로 포함된 텍스트로 변환.
+ *  react-markdown의 인라인 HTML 파싱을 위해 [[N]] → <sup class="cite-badge" data-cite="N">N</sup> 치환 후
+ *  렌더링 결과에서 클릭 이벤트를 연결합니다. */
+function preprocessCitations(
   content: string,
   citations: Citation[] | undefined,
-  onCitationClick: (index: number) => void,
-): React.ReactNode[] {
-  if (!citations || citations.length === 0) {
-    return [content];
-  }
-
-  // [[1]], [[2]], [[3]] 등을 기준으로 텍스트 분할
-  const citationPattern = /\[\[(\d+)\]\]/g;
-  const parts: React.ReactNode[] = [];
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let keyCounter = 0;
-
-  while ((match = citationPattern.exec(content)) !== null) {
-    // 마커 앞의 일반 텍스트
-    if (match.index > lastIndex) {
-      parts.push(
-        <span key={`t-${keyCounter++}`}>
-          {content.slice(lastIndex, match.index)}
-        </span>,
-      );
-    }
-
-    const citationIndex = parseInt(match[1], 10);
-    const citation = citations.find((c) => c.index === citationIndex);
-
-    // 인용 뱃지
-    parts.push(
-      <button
-        key={`c-${keyCounter++}`}
-        onClick={(e) => {
-          e.stopPropagation();
-          onCitationClick(citationIndex);
-        }}
-        className="inline-flex items-center justify-center w-4 h-4 text-[10px] font-bold leading-none rounded-full bg-blue-500 text-white hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 cursor-pointer align-super mx-0.5 transition-colors"
-        title={citation ? `${citation.source}${citation.page ? `, p.${citation.page}` : ""}` : `인용 ${citationIndex}`}
-      >
-        {citationIndex}
-      </button>,
-    );
-
-    lastIndex = citationPattern.lastIndex;
-  }
-
-  // 마지막 남은 텍스트
-  if (lastIndex < content.length) {
-    parts.push(
-      <span key={`t-${keyCounter++}`}>
-        {content.slice(lastIndex)}
-      </span>,
-    );
-  }
-
-  return parts;
+): string {
+  if (!citations || citations.length === 0) return content;
+  return content.replace(/\[\[(\d+)\]\]/g, (_m, num) => {
+    const idx = parseInt(num, 10);
+    const c = citations.find((c) => c.index === idx);
+    const title = c ? `${c.source}${c.page ? `, p.${c.page}` : ""}` : `인용 ${idx}`;
+    return `<sup class="cite-badge" data-cite="${idx}" title="${title}">${idx}</sup>`;
+  });
 }
 
 // ── Citation detail card ───────────────────────────────────────────────────
@@ -148,11 +107,23 @@ export default function MessageBubble({ message, sessionId, messageIndex, isStre
     setActiveCitation(activeCitation === index ? null : index);
   };
 
-  // 인용 뱃지가 포함된 콘텐츠
-  const renderedContent = useMemo(
-    () => renderContentWithCitations(message.content, message.citations, handleCitationClick),
-    [message.content, message.citations, activeCitation],
+  // 인용 뱃지가 포함된 콘텐츠 (마크다운 전에 치환)
+  const processedContent = useMemo(
+    () => preprocessCitations(message.content, message.citations),
+    [message.content, message.citations],
   );
+
+  // 렌더링 후 인용 뱃지 클릭 이벤트 연결
+  const handleMarkdownRef = (el: HTMLElement | null) => {
+    if (!el) return;
+    el.querySelectorAll(".cite-badge").forEach((badge) => {
+      const idx = parseInt((badge as HTMLElement).dataset.cite || "0", 10);
+      badge.addEventListener("click", (e) => {
+        e.stopPropagation();
+        handleCitationClick(idx);
+      });
+    });
+  };
 
   // 활성 인용 정보
   const activeCitationData = message.citations?.find((c) => c.index === activeCitation);
@@ -216,13 +187,22 @@ export default function MessageBubble({ message, sessionId, messageIndex, isStre
             : "bg-gray-200 text-gray-800 dark:bg-gray-700 dark:text-gray-100 rounded-bl-none"
         }`}
       >
-        {/* ── 메시지 본문 (인용 뱃지 포함) ── */}
-        <p className="text-sm whitespace-pre-wrap leading-relaxed">
-          {renderedContent || (isStreaming ? "" : "")}
+        {/* ── 메시지 본문 (마크다운 + 인용 뱃지) ── */}
+        <div ref={handleMarkdownRef} className="markdown-body text-sm leading-relaxed">
+          {isUser ? (
+            <p className="whitespace-pre-wrap">{message.content}</p>
+          ) : (
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+            >
+              {processedContent || (isStreaming ? "" : "")}
+            </ReactMarkdown>
+          )}
           {isStreaming && (
             <span className="inline-block w-1.5 h-4 ml-0.5 bg-gray-600 dark:bg-gray-300 animate-pulse align-text-bottom rounded-sm" />
           )}
-        </p>
+        </div>
 
         {/* ── 인용 상세 카드 (클릭한 인용) ── */}
         {activeCitationData && (
