@@ -188,7 +188,7 @@ def get_system_prompt_text(
         effective = store.get_effective_prompt(mode=mode, workspace_id=workspace_id)
 
         if effective is not None:
-            context = store.build_context(workspace_id=workspace_id)
+            context = store.build_context(workspace_id=workspace_id, mode=mode.value)
             rendered, _, _ = render_prompt(effective.prompt_text, context)
             return rendered
     except Exception as exc:

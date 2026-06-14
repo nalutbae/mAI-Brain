@@ -15,7 +15,7 @@ import {
 
 export default function WorkspacesContent() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [documents, setDocuments] = useState<{ id: string; original_filename: string }[]>([]);
+  const [documents, setDocuments] = useState<{ document_id: string; filename: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -32,7 +32,7 @@ export default function WorkspacesContent() {
     try {
       const [wsRes, docs] = await Promise.all([listWorkspaces(), getDocuments()]);
       setWorkspaces(wsRes.workspaces);
-      setDocuments(docs.map((d: any) => ({ id: d.id, original_filename: d.original_filename })));
+      setDocuments(docs.map((d: any) => ({ document_id: d.document_id, filename: d.filename })));
     } catch (err) {
       setError("데이터를 불러오지 못했습니다.");
     } finally {
@@ -256,16 +256,16 @@ export default function WorkspacesContent() {
                   <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">문서 할당</h4>
                   <div className="max-h-48 overflow-y-auto space-y-1">
                     {documents.map((doc) => {
-                      const isAssigned = ws.document_ids.includes(doc.id);
+                      const isAssigned = ws.document_ids.includes(doc.document_id);
                       return (
-                        <label key={doc.id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
+                        <label key={doc.document_id} className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={isAssigned}
-                            onChange={() => handleAssign(ws.id, doc.id, !isAssigned)}
+                            onChange={() => handleAssign(ws.id, doc.document_id, !isAssigned)}
                             className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                           />
-                          <span className="text-sm text-gray-700 dark:text-gray-300">{doc.original_filename}</span>
+                          <span className="text-sm text-gray-700 dark:text-gray-300">{doc.filename}</span>
                         </label>
                       );
                     })}

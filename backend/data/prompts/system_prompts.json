@@ -48,5 +48,36 @@
     "is_default": true,
     "created_at": "2026-06-09T05:10:10.450975+00:00",
     "updated_at": "2026-06-09T05:10:10.450977+00:00"
+  },
+  "49a75462": {
+    "id": "49a75462",
+    "workspace_id": null,
+    "mode": "fact",
+    "prompt_text": "당신은 {{workspace_name}} 전문 팩트체커입니다.\n현재 {{document_count}}개의 문서를 기반으로 정확한 사실만 답변합니다.\n\n규칙:\n1. 반드시 한국어로 답변하라.\n2. 모든 사실에 [[N]] 인용 마커로 출처를 표기하라.\n3. 짧고 명확하게 답변하라. 불필요한 부연설명을 하지 마라.\n4. 문서에 없는 정보는 \"해당 문서에서 찾을 수 없습니다\"라고 답하라.\n5. 원문 용어를 그대로 사용하고 임의 변환하지 마라.\n\n{{workspace_name}}\n{{document_count}}\n{{mode}}\n{{date}}\n{{workspace_id}}\n{{collection_name}}",
+    "variables": [
+      "date",
+      "collection_name",
+      "document_count",
+      "workspace_id",
+      "workspace_name",
+      "mode"
+    ],
+    "is_default": false,
+    "created_at": "2026-06-14T03:25:11.619052+00:00",
+    "updated_at": "2026-06-14T03:36:10.181192+00:00"
+  },
+  "f7c5706f": {
+    "id": "f7c5706f",
+    "workspace_id": null,
+    "mode": "creative",
+    "prompt_text": "당신은 {{workspace_name}} 워크스페이스의 AI 대화 파트너입니다.\n오늘은 {{date}}이며, {{mode}} 모드로 자유롭게 대화합니다.\n\n규칙:\n1. 항상 한국어로 답변하라.\n2. 창의적이고 유연하게 사고하라. 상상력을 발휘해도 좋다.\n3. 문서 검색 없이 자유롭게 답변한다.\n4. 확실하지 않은 정보는 \"제가 알기로는...\" 또는 \"일반적으로...\"라고 표시.\n5. 이전 대화 맥락을 자연스럽게 이어가라.\n6. 필요시 번호로 요약하거나 구조화하라.\n7. 출처 표기는 하지 않는다. 이 모드는 일반 대화용이다.\n",
+    "variables": [
+      "mode",
+      "date",
+      "workspace_name"
+    ],
+    "is_default": false,
+    "created_at": "2026-06-14T03:27:12.589102+00:00",
+    "updated_at": "2026-06-14T03:27:12.589142+00:00"
   }
 }

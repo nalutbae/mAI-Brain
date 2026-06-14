@@ -1404,9 +1404,10 @@ export async function deletePrompt(id: string): Promise<{ message: string; id: s
   return fetchAPI(`/api/prompts/${id}`, { method: "DELETE" });
 }
 
-export async function previewPrompt(id: string, workspace_id?: string): Promise<SystemPromptPreview> {
+export async function previewPrompt(id: string, workspace_id?: string, mode?: string): Promise<SystemPromptPreview> {
   const searchParams = new URLSearchParams();
   if (workspace_id) searchParams.set("workspace_id", workspace_id);
+  if (mode) searchParams.set("mode", mode);
   const qs = searchParams.toString();
   return fetchAPI<SystemPromptPreview>(`/api/prompts/${id}/preview${qs ? `?${qs}` : ""}`, {
     method: "POST",

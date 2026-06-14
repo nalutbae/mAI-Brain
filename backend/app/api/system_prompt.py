@@ -99,10 +99,11 @@ def delete_prompt(prompt_id: str):
 def preview_prompt(
     prompt_id: str,
     workspace_id: Optional[str] = Query(default=None, description="변수 치환용 워크스페이스 ID"),
+    mode: Optional[str] = Query(default=None, description="채팅 모드 (변수 치환용)"),
 ):
     """프롬프트 미리보기. 템플릿 변수를 실제 값으로 치환한 결과를 반환."""
     store = get_system_prompt_store()
-    context = store.build_context(workspace_id=workspace_id)
+    context = store.build_context(workspace_id=workspace_id, mode=mode)
     result = store.preview_prompt(prompt_id, context=context)
     if not result:
         raise HTTPException(status_code=404, detail="프롬프트를 찾을 수 없습니다")

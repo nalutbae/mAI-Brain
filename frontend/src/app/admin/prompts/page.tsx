@@ -14,6 +14,7 @@ import {
   previewPrompt,
   listDefaultPrompts,
   listSupportedVariables,
+  listWorkspaces,
 } from "../../../lib/api";
 
 // ── 모드 탭 설정 ───────────────────────────────────────────────────────
@@ -141,21 +142,28 @@ function PromptsContent() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | "none" | null>(null);
 
   const selected = prompts.find((p) => p.id === selectedId) || null;
   const isDefault = selected?.is_default || false;
 
+  // 미리보기에 사용할 워크스페이스 ID: 프롬프트에 지정된 것 > 사용자 선택 > null
+  const previewWorkspaceId = selected?.workspace_id || (selectedWorkspaceId && selectedWorkspaceId !== "none" ? selectedWorkspaceId : undefined);
+
   // 데이터 로드
   const loadData = useCallback(async () => {
     try {
-      const [allRes, defRes, varRes] = await Promise.all([
+      const [allRes, defRes, varRes, wsRes] = await Promise.all([
         listPrompts({ mode: activeMode }),
         listDefaultPrompts(),
         listSupportedVariables(),
+        listWorkspaces(),
       ]);
       setPrompts(allRes.prompts);
       setDefaults(defRes.prompts.filter((p) => p.mode === activeMode));
       setVariables(varRes.variables);
+      setWorkspaces(wsRes.workspaces.map((ws: any) => ({ id: ws.id, name: ws.name })));
       setError(null);
     } catch {
       setError("프롬프트 목록을 불러오는데 실패했습니다.");
@@ -186,7 +194,7 @@ function PromptsContent() {
     if (!selectedId) return;
     setPreviewLoading(true);
     try {
-      const result = await previewPrompt(selectedId, selected?.workspace_id ?? undefined);
+      const result = await previewPrompt(selectedId, previewWorkspaceId, selected?.mode ?? undefined);
       setPreview(result);
       setError(null);
     } catch {
@@ -212,7 +220,7 @@ function PromptsContent() {
         await createPrompt({
           mode: activeMode,
           prompt_text: editText,
-          workspace_id: null,
+          workspace_id: selectedWorkspaceId && selectedWorkspaceId !== "none" ? selectedWorkspaceId : null,
         });
         setSuccessMsg("새 프롬프트가 생성되었습니다.");
         setEditText("");
@@ -383,6 +391,33 @@ function PromptsContent() {
                   : "커스텀 프롬프트 수정"
                 : "새 프롬프트 작성"}
             </h2>
+
+            {/* 워크스페이스 선택 */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                워크스페이스
+              </label>
+              <select
+                value={selected?.workspace_id || selectedWorkspaceId || "none"}
+                onChange={(e) => setSelectedWorkspaceId(e.target.value)}
+                disabled={!!selectedId}
+                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                  bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-200 text-sm
+                  focus:ring-2 focus:ring-blue-500 focus:border-transparent
+                  disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <option value="none">전체 (워크스페이스 미지정)</option>
+                {workspaces.map((ws) => (
+                  <option key={ws.id} value={ws.id}>
+                    {ws.name}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                {"워크스페이스를 지정하면 해당 워크스페이스에서 채팅 시 이 프롬프트가 우선 적용됩니다. "}
+                {"{{workspace_name}}, {{document_count}} 등의 변수는 워크스페이스 선택 시에만 치환됩니다."}
+              </p>
+            </div>
 
             <textarea
               value={editText}

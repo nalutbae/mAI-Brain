@@ -130,6 +130,7 @@ from app.api import (
     feedback,
     sessions,
     settings as settings_api,
+    system_prompt,
     voice,
     widget,
     workspace,
@@ -146,6 +147,7 @@ app.include_router(settings_api.router, prefix="/api/settings", tags=["settings"
 app.include_router(voice.router, prefix="/api/voice", tags=["voice"])
 app.include_router(widget.router, prefix="/api/widget", tags=["widget"])
 app.include_router(workspace.router, prefix="/api/workspaces", tags=["workspaces"])
+app.include_router(system_prompt.router, prefix="/api/prompts", tags=["prompts"])
 
 # ── API 키 관리 (관리자용) ──────────────────────────────────────────────────
 from app.api import api_keys, auth, admin_users

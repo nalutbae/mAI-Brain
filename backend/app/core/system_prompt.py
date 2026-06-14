@@ -264,6 +264,7 @@ class SystemPromptStore:
     def build_context(
         self,
         workspace_id: Optional[str] = None,
+        mode: Optional[str] = None,
     ) -> dict[str, str]:
         """변수 치환에 필요한 컨텍스트 구성.
 
@@ -274,6 +275,9 @@ class SystemPromptStore:
         now = datetime.now(timezone.utc)
 
         context["date"] = now.strftime("%Y-%m-%d")
+
+        if mode is not None:
+            context["mode"] = mode
 
         if workspace_id:
             from app.core.workspace import get_workspace_store
