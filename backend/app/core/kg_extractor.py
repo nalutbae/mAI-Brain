@@ -318,18 +318,26 @@ class KGExtractor:
         )
 
     def _call_llm(self, messages: list[dict]) -> str:
-        """LLM 프로바이더 체인을 통해 응답을 가져옵니다."""
-        from app.models.provider import ProviderSettingsStore
+        """LLM 프로바이더 체인을 통해 응답을 가져옵니다.
 
-        store = ProviderSettingsStore.get()
-        active_provider = store.get_active_llm_provider()
-        if not active_provider:
+        활성 프로바이더 → 폴백 프로바이더 순서로 시도합니다.
+        """
+        chain = self.llm._get_provider_chain()
+        if not chain:
             raise RuntimeError("활성 LLM 프로바이더가 없습니다.")
 
-        result = self.llm._call_provider(active_provider, messages, max_tokens=2048)
-        if result is None:
-            raise RuntimeError("LLM 응답이 없습니다.")
-        return result
+        last_error: Exception | None = None
+        for provider_config in chain:
+            try:
+                result = self.llm._call_provider(provider_config, messages, max_tokens=2048)
+                if result is not None:
+                    return result
+            except Exception as exc:
+                last_error = exc
+                logger.warning("KG 추출: %s 프로바이더 실패 — %s", provider_config.provider, exc)
+                continue
+
+        raise RuntimeError(f"LLM 응답이 없습니다 (모든 프로바이더 실패). 마지막 오류: {last_error}")
 
     @staticmethod
     def _merge_entities(entities: list[Entity]) -> list[Entity]:

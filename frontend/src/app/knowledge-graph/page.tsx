@@ -6,9 +6,11 @@ import {
   fetchKGStats,
   extractKnowledgeGraph,
   searchKGEntities,
+  getDocuments,
   type GraphData,
   type KGStats,
   type EntitySearchResult,
+  type Document,
 } from "@/lib/api";
 
 // ── 엔티티 타입 색상 매핑 ──────────────────────────────────────────────────
@@ -69,6 +71,9 @@ export default function KnowledgeGraphPage() {
   const [loading, setLoading] = useState(false);
   const [extracting, setExtracting] = useState(false);
   const [documentId, setDocumentId] = useState("");
+  const [documents, setDocuments] = useState<Document[]>([]);
+  const [docSearch, setDocSearch] = useState("");
+  const [docDropdownOpen, setDocDropdownOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<EntitySearchResult[]>([]);
   const [selectedTypes, setSelectedTypes] = useState<Set<string>>(new Set());
@@ -108,6 +113,13 @@ export default function KnowledgeGraphPage() {
   useEffect(() => {
     loadStats();
   }, [loadStats]);
+
+  // 문서 목록 로딩
+  useEffect(() => {
+    getDocuments()
+      .then((docs) => setDocuments(docs))
+      .catch(() => setDocuments([]));
+  }, []);
 
   useEffect(() => {
     loadGraph();
@@ -433,7 +445,7 @@ export default function KnowledgeGraphPage() {
   // ── 렌더 ──────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-1 flex-col overflow-hidden min-h-0">
       {/* 헤더 */}
       <div className="border-b border-gray-700 bg-gray-900 px-6 py-4">
         <div className="flex items-center justify-between">
@@ -464,13 +476,71 @@ export default function KnowledgeGraphPage() {
             <h2 className="mb-2 text-sm font-semibold text-gray-300">
               엔티티 추출
             </h2>
-            <input
-              type="text"
-              placeholder="문서 ID 입력"
-              value={documentId}
-              onChange={(e) => setDocumentId(e.target.value)}
-              className="mb-2 w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-            />
+            <div className="relative mb-2">
+              <input
+                type="text"
+                placeholder="문서 검색 또는 ID 직접 입력"
+                value={docSearch || (documentId ? documents.find((d) => d.document_id === documentId)?.filename || documentId : "")}
+                onChange={(e) => {
+                  setDocSearch(e.target.value);
+                  setDocDropdownOpen(true);
+                  // 직접 ID 입력 지원: 검색어를 documentId로 설정
+                  if (e.target.value && !documents.some((d) => d.filename === e.target.value || d.document_id === e.target.value)) {
+                    setDocumentId(e.target.value);
+                  } else {
+                    setDocumentId("");
+                  }
+                }}
+                onFocus={() => setDocDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setDocDropdownOpen(false), 200)}
+                className="w-full rounded border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
+              />
+              {/* 선택된 문서 표시 */}
+              {documentId && !docSearch && (
+                <button
+                  onClick={() => { setDocumentId(""); setDocSearch(""); }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white"
+                  title="선택 해제"
+                >
+                  ✕
+                </button>
+              )}
+              {/* 드롭다운 목록 */}
+              {docDropdownOpen && (
+                <div className="absolute z-20 mt-1 max-h-48 w-full overflow-y-auto rounded border border-gray-600 bg-gray-800 shadow-lg">
+                  {(() => {
+                    const filtered = documents.filter(
+                      (d) =>
+                        d.filename.toLowerCase().includes((docSearch || "").toLowerCase()) ||
+                        d.document_id.toLowerCase().includes((docSearch || "").toLowerCase())
+                    );
+                    if (filtered.length === 0) {
+                      return (
+                        <div className="px-3 py-2 text-xs text-gray-500">
+                          {docSearch ? "검색 결과 없음 — ID를 직접 입력하세요" : "인덱싱된 문서가 없습니다"}
+                        </div>
+                      );
+                    }
+                    return filtered.map((doc) => (
+                      <button
+                        key={doc.document_id}
+                        onClick={() => {
+                          setDocumentId(doc.document_id);
+                          setDocSearch("");
+                          setDocDropdownOpen(false);
+                        }}
+                        className={`w-full px-3 py-2 text-left text-xs hover:bg-gray-700 ${
+                          documentId === doc.document_id ? "bg-blue-600/20 text-blue-300" : "text-gray-300"
+                        }`}
+                      >
+                        <div className="font-medium">{doc.filename}</div>
+                        <div className="text-gray-500">{doc.document_id}</div>
+                      </button>
+                    ));
+                  })()}
+                </div>
+              )}
+            </div>
             <button
               onClick={handleExtract}
               disabled={extracting || !documentId}
@@ -614,7 +684,7 @@ export default function KnowledgeGraphPage() {
               <div className="text-center text-gray-500">
                 <p className="text-lg">지식 그래프가 비어 있습니다</p>
                 <p className="text-sm">
-                  문서 ID를 입력하고 &ldquo;추출 실행&rdquo;을 클릭하세요
+                  문서를 선택하고 &ldquo;추출 실행&rdquo;을 클릭하세요
                 </p>
               </div>
             </div>

@@ -60,7 +60,7 @@ class ExtractionStatus(str, Enum):
 
 class Entity(BaseModel):
     """지식 그래프 엔티티."""
-    id: str = Field(default_factory=lambda: f"ent-{uuid.uuid4().hex[:12]}")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str                          # 엔티티 이름 (예: "대한민국 헌법 제21조")
     type: EntityType                   # 엔티티 타입
     description: Optional[str] = None  # 간단 설명
@@ -89,7 +89,7 @@ class Entity(BaseModel):
 
 class Relation(BaseModel):
     """엔티티 간 관계."""
-    id: str = Field(default_factory=lambda: f"rel-{uuid.uuid4().hex[:12]}")
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     source_entity_id: str      # 출발 엔티티
     target_entity_id: str      # 도착 엔티티
     relation_type: RelationType

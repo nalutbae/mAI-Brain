@@ -43,9 +43,31 @@ KG_RELATIONS_COLLECTION = "mai_brain_kg_relations"
 # ── 컬렉션 초기화 ──────────────────────────────────────────────────────────────
 
 
-def ensure_kg_collections(qdrant_client: QdrantClient, embedding_dim: int = 768) -> None:
-    """KG 컬렉션이 없으면 생성합니다."""
-    settings = get_settings()
+def _get_embedding_dim() -> int:
+    """임베딩 프로바이더의 실제 차원 수를 반환합니다.
+
+    더미 텍스트를 인코딩하여 실제 벡터 차원을 감지합니다.
+    실패 시 설정의 ollama_embedding_dim을 폴백으로 사용합니다.
+    """
+    from app.core.embedding import get_embedding_provider
+
+    try:
+        provider = get_embedding_provider()
+        result = provider.encode(["test"])
+        if result.dense and len(result.dense) > 0:
+            return len(result.dense[0])
+    except Exception:
+        logger.warning("임베딩 차원 감지 실패, 설정값을 사용합니다.")
+    return get_settings().ollama_embedding_dim
+
+
+def ensure_kg_collections(qdrant_client: QdrantClient, embedding_dim: int | None = None) -> None:
+    """KG 컬렉션이 없으면 생성합니다.
+
+    embedding_dim이 None이면 임베딩 프로바이더의 실제 차원을 자동 감지합니다.
+    """
+    if embedding_dim is None:
+        embedding_dim = _get_embedding_dim()
 
     # 엔티티 컬렉션
     if not qdrant_client.collection_exists(KG_ENTITIES_COLLECTION):
@@ -113,7 +135,6 @@ async def store_extraction_result(result: ExtractionResult) -> None:
     from app.core.vectordb import get_vector_db
 
     vdb = get_vector_db()
-    settings = get_settings()
 
     # Qdrant 클라이언트 가져오기
     qdrant_client = vdb.client if hasattr(vdb, "client") else None
@@ -121,12 +142,15 @@ async def store_extraction_result(result: ExtractionResult) -> None:
         logger.error("Qdrant 클라이언트를 가져올 수 없습니다.")
         return
 
-    # 컬렉션 초기화
-    ensure_kg_collections(qdrant_client, embedding_dim=settings.ollama_embedding_dim)
-
     # 임베딩 프로바이더로 엔티티 이름 임베딩
-    from app.core.vectordb import get_embedding_provider
+    from app.core.embedding import get_embedding_provider
     embedding_provider = get_embedding_provider()
+
+    # 임베딩 실제 차원 감지
+    embedding_dim = _get_embedding_dim()
+
+    # 컬렉션 초기화 (실제 차원 사용)
+    ensure_kg_collections(qdrant_client, embedding_dim=embedding_dim)
 
     if result.entities:
         # 엔티티 이름 목록 임베딩
@@ -137,7 +161,7 @@ async def store_extraction_result(result: ExtractionResult) -> None:
         # 엔티티 포인트 구성
         entity_points = []
         for i, entity in enumerate(result.entities):
-            vector = dense_vectors[i] if i < len(dense_vectors) else [0.0] * settings.ollama_embedding_dim
+            vector = dense_vectors[i] if i < len(dense_vectors) else [0.0] * embedding_dim
             entity_points.append(PointStruct(
                 id=entity.id,
                 vector=vector.tolist() if hasattr(vector, "tolist") else list(vector),
@@ -172,7 +196,7 @@ async def store_extraction_result(result: ExtractionResult) -> None:
             rel_points_batch = []
             relation_points.append(PointStruct(
                 id=rel.id,
-                vector=[0.0] * settings.ollama_embedding_dim,  # 더미 벡터 — 관계는 벡터 검색 대상이 아님
+                vector=[0.0] * embedding_dim,  # 더미 벡터 — 관계는 벡터 검색 대상이 아님
                 payload={
                     "source_entity_id": rel.source_entity_id,
                     "target_entity_id": rel.target_entity_id,
@@ -373,11 +397,10 @@ def search_entities(
     limit: int = 20,
 ) -> list[dict]:
     """시맨틱 검색으로 엔티티를 조회합니다."""
-    from app.core.vectordb import get_embedding_provider
+    from app.core.embedding import get_embedding_provider
 
     embedding_provider = get_embedding_provider()
-    settings = get_settings()
-    ensure_kg_collections(qdrant_client, embedding_dim=settings.ollama_embedding_dim)
+    ensure_kg_collections(qdrant_client)
 
     # 쿼리 임베딩
     query_embed = embedding_provider.encode([query])
