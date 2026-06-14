@@ -16,7 +16,6 @@ from app.models.provider import (
     EMBEDDING_PROVIDER_DEFAULTS,
     LLM_PROVIDER_DEFAULTS,
     EmbeddingProviderConfig,
-    EmbeddingProviderType,
     LLMProviderConfig,
     LLMProviderType as NewLLMProviderType,
     ProviderSettingsStore,
@@ -58,17 +57,6 @@ class LLMProviderUpdate(BaseModel):
     max_tokens: Optional[int] = None
     fallback_provider_id: Optional[str] = None
 
-
-class EmbeddingProviderUpdate(BaseModel):
-    """임베딩 프로바이더 업데이트 요청"""
-    provider: EmbeddingProviderType
-    api_key_env_var: str = Field(
-        default="",
-        description="API 키를 로드할 환경변수명. 빈값 → 프로바이더 기본 환경변수",
-    )
-    base_url: str = Field(default="")
-    model: str = Field(default="")
-    dim: int = Field(default=0)
 
 
 class ConnectionTestRequest(BaseModel):
@@ -194,33 +182,60 @@ def activate_llm_provider(provider_id: str):
 # 임베딩 프로바이더 엔드포인트
 # ---------------------------------------------------------------------------
 
+class EmbeddingProviderUpdate(BaseModel):
+    """임베딩 프로바이더 업데이트 요청"""
+    api_key_env_var: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+    dim: Optional[int] = None
+    name: Optional[str] = None
+
+
 @router.get("/providers/embedding")
-def get_embedding_provider():
-    """임베딩 프로바이더 설정 조회."""
+def list_embedding_providers():
+    """임베딩 프로바이더 목록 조회."""
     store = ProviderSettingsStore.get()
-    config = store.get_settings().embedding
-    d = config.model_dump()
-    d["api_key_status"] = _api_key_status(config)
-    return d
+    settings = store.get_settings()
+    return {
+        "providers": [
+            {**p.model_dump(), "api_key_status": _api_key_status(p)}
+            for p in settings.embedding_providers
+        ],
+        "active_id": next(
+            (p.id for p in settings.embedding_providers if p.is_active),
+            None,
+        ),
+    }
 
 
-@router.put("/providers/embedding")
-def update_embedding_provider(req: EmbeddingProviderUpdate):
+@router.put("/providers/embedding/{provider_id}")
+def update_embedding_provider(provider_id: str, req: EmbeddingProviderUpdate):
     """임베딩 프로바이더 설정 업데이트."""
     store = ProviderSettingsStore.get()
-    config = EmbeddingProviderConfig(
-        provider=req.provider,
-        api_key_env_var=req.api_key_env_var,
-        base_url=req.base_url,
-        model=req.model,
-        dim=req.dim,
-    )
-    updated = store.update_embedding_provider(config)
-    d = updated.model_dump()
-    d["api_key_status"] = _api_key_status(updated)
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    updated = store.update_embedding_provider_config(provider_id, updates)
+    if updated is None:
+        raise HTTPException(status_code=404, detail=f"임베딩 프로바이더 '{provider_id}'를 찾을 수 없습니다.")
     # 임베딩 프로바이더 변경 시 싱글톤 리셋 필요
     from app.core.embedding import reset_embedding_provider
     reset_embedding_provider()
+    d = updated.model_dump()
+    d["api_key_status"] = _api_key_status(updated)
+    return d
+
+
+@router.post("/providers/embedding/{provider_id}/activate")
+def activate_embedding_provider(provider_id: str):
+    """활성 임베딩 프로바이더 변경."""
+    store = ProviderSettingsStore.get()
+    activated = store.set_active_embedding_provider(provider_id)
+    if activated is None:
+        raise HTTPException(status_code=404, detail=f"임베딩 프로바이더 '{provider_id}'를 찾을 수 없습니다.")
+    # 임베딩 프로바이더 변경 시 싱글톤 리셋 필요
+    from app.core.embedding import reset_embedding_provider
+    reset_embedding_provider()
+    d = activated.model_dump()
+    d["api_key_status"] = _api_key_status(activated)
     return d
 
 
@@ -377,12 +392,14 @@ def get_full_settings():
             ),
         },
         "embedding": {
-            "provider": settings.embedding.provider.value,
-            "api_key_env_var": settings.embedding.api_key_env_var,
-            "api_key_status": _api_key_status(settings.embedding),
-            "base_url": settings.embedding.base_url,
-            "model": settings.embedding.model,
-            "dim": settings.embedding.dim,
+            "providers": [
+                {**p.model_dump(), "api_key_status": _api_key_status(p)}
+                for p in settings.embedding_providers
+            ],
+            "active_id": next(
+                (p.id for p in settings.embedding_providers if p.is_active),
+                None,
+            ),
         },
         "reranker": {
             "enabled": app_settings.reranker_enabled,

@@ -546,21 +546,36 @@ class LLMClient:
     # 프롬프트 구성
     # ------------------------------------------------------------------- #
 
+    # 프롬프트 최대 토큰 수 (모델 컨텍스트 윈도우 고려)
+    # 대부분의 모델이 128k 이상을 지원하므로, 안전하게 100k 토큰(≈400k 문자)으로 제한
+    MAX_CONTEXT_CHARS = 200_000  # 약 50k 토큰 (영어 기준 4자/토큰, 한국어는 더 높을 수 있음)
+
     def _build_context(self, contexts: list[SearchHit]) -> str:
         """검색 결과를 컨텍스트 텍스트로 변환.
 
         [[N]] 인용 마커를 사용하여 LLM이 답변에서 참조할 수 있도록 합니다.
         예: --- [[1]] filename.pdf, p.5 ---  (첫 번째 검색 결과)
+        
+        MAX_CONTEXT_CHARS를 초과하면 앞에서부터 잘라냅니다.
         """
         if not contexts:
             return "관련 문서를 찾을 수 없습니다."
 
         parts = []
+        total_chars = 0
         for i, hit in enumerate(contexts, 1):
             source_info = f"{hit.source}"
             if hit.page is not None:
                 source_info += f", p.{hit.page}"
-            parts.append(f"--- [[{i}]] {source_info} ---\n{hit.text}\n")
+            chunk = f"--- [[{i}]] {source_info} ---\n{hit.text}\n"
+            if total_chars + len(chunk) > self.MAX_CONTEXT_CHARS:
+                # 제한 초과 시 마지막 청크까지 포함하고 중단
+                remaining = self.MAX_CONTEXT_CHARS - total_chars
+                if remaining > 200:  # 최소 200자는 포함
+                    parts.append(chunk[:remaining] + "\n[... 문서가 너무 길어 일부 생략됨]\n")
+                break
+            parts.append(chunk)
+            total_chars += len(chunk)
 
         return "\n".join(parts)
 

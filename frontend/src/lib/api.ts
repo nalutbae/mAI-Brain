@@ -953,13 +953,16 @@ export interface LLMProviderConfig {
   display_name: string;
 }
 
-export interface EmbeddingConfig {
+export interface EmbeddingProviderConfig {
+  id: string;
   provider: EmbeddingProvider;
+  name: string;
   api_key_env_var: string;
   api_key_status: APIKeyStatus;
   base_url: string;
   model: string;
   dim: number;
+  is_active: boolean;
 }
 
 export interface ProviderDefaults {
@@ -1020,21 +1023,22 @@ export async function activateLLMProvider(id: string): Promise<LLMProviderConfig
 }
 
 // 임베딩 프로바이더
-export async function getEmbeddingProvider(): Promise<EmbeddingConfig> {
+export async function listEmbeddingProviders(): Promise<{ providers: EmbeddingProviderConfig[]; active_id: string | null }> {
   return fetchAPI("/api/settings/providers/embedding");
 }
 
-export async function updateEmbeddingProvider(data: {
-  provider: EmbeddingProvider;
-  api_key_env_var?: string;
-  base_url?: string;
-  model?: string;
-  dim?: number;
-}): Promise<EmbeddingConfig> {
-  return fetchAPI("/api/settings/providers/embedding", {
+export async function updateEmbeddingProvider(
+  id: string,
+  data: Partial<Omit<EmbeddingProviderConfig, "id" | "api_key_status">>
+): Promise<EmbeddingProviderConfig> {
+  return fetchAPI(`/api/settings/providers/embedding/${id}`, {
     method: "PUT",
     body: JSON.stringify(data),
   });
+}
+
+export async function activateEmbeddingProvider(id: string): Promise<EmbeddingProviderConfig> {
+  return fetchAPI(`/api/settings/providers/embedding/${id}/activate`, { method: "POST" });
 }
 
 // 사용 가능한 프로바이더 목록
@@ -1071,7 +1075,7 @@ export async function testProviderConnection(data: {
 // 전체 설정 조회
 export async function getFullSettings(): Promise<{
   llm: { providers: LLMProviderConfig[]; active_id: string | null };
-  embedding: EmbeddingConfig;
+  embedding: { providers: EmbeddingProviderConfig[]; active_id: string | null };
   reranker: RerankerConfig;
 }> {
   return fetchAPI("/api/settings/settings");

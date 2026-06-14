@@ -7,8 +7,9 @@ import {
   updateLLMProvider,
   deleteLLMProvider,
   activateLLMProvider,
-  getEmbeddingProvider,
+  listEmbeddingProviders,
   updateEmbeddingProvider,
+  activateEmbeddingProvider,
   listAvailableLLMProviders,
   listAvailableEmbeddingProviders,
   testProviderConnection,
@@ -17,9 +18,8 @@ import {
   getOcrConfig,
   updateOcrConfig,
   type LLMProvider,
-  type EmbeddingProvider,
   type LLMProviderConfig,
-  type EmbeddingConfig,
+  type EmbeddingProviderConfig,
   type ProviderDefaults,
   type ConnectionTestResult,
   type RerankerConfig,
@@ -75,9 +75,12 @@ export default function SettingsContent() {
   const [editApiKeyEnvVar, setEditApiKeyEnvVar] = useState("");
 
   // ── Embedding ────────────────────────────────────────────────────────
-  const [embedding, setEmbedding] = useState<EmbeddingConfig | null>(null);
+  const [embProviders, setEmbProviders] = useState<EmbeddingProviderConfig[]>([]);
+  const [embActiveId, setEmbActiveId] = useState<string | null>(null);
   const [availableEmb, setAvailableEmb] = useState<any[]>([]);
   const [embLoading, setEmbLoading] = useState(true);
+  const [editingEmbId, setEditingEmbId] = useState<string | null>(null);
+  const [editEmbApiKeyEnvVar, setEditEmbApiKeyEnvVar] = useState("");
 
   // ── Add provider form ────────────────────────────────────────────────
   const [showAddForm, setShowAddForm] = useState(false);
@@ -97,16 +100,8 @@ export default function SettingsContent() {
   const [testModel, setTestModel] = useState("");
 
   // ── Embedding form ───────────────────────────────────────────────────
-  const [embProvider, setEmbProvider] = useState<EmbeddingProvider>("local");
-  const [embApiKeyEnvVar, setEmbApiKeyEnvVar] = useState("");
-  const [embBaseUrl, setEmbBaseUrl] = useState("");
-  const [embModel, setEmbModel] = useState("");
-  const [embDim, setEmbDim] = useState(0);
   const [embSaving, setEmbSaving] = useState(false);
   const [embMessage, setEmbMessage] = useState("");
-
-  // 원래 임베딩 프로바이더 (변경 감지용)
-  const [originalEmbProvider, setOriginalEmbProvider] = useState<string>("local");
 
   // ── Reranker ─────────────────────────────────────────────────────────
   const [reranker, setReranker] = useState<RerankerConfig>({
@@ -140,7 +135,7 @@ export default function SettingsContent() {
       const [llmRes, availRes, embRes, availEmbRes, rerankerRes, ocrRes] = await Promise.all([
         listLLMProviders(),
         listAvailableLLMProviders(),
-        getEmbeddingProvider(),
+        listEmbeddingProviders(),
         listAvailableEmbeddingProviders(),
         getRerankerConfig(),
         getOcrConfig(),
@@ -148,13 +143,8 @@ export default function SettingsContent() {
       setProviders(llmRes.providers);
       setActiveId(llmRes.active_id);
       setAvailableLLM(availRes.providers);
-      setEmbedding(embRes);
-      setEmbProvider(embRes.provider);
-      setEmbApiKeyEnvVar(embRes.api_key_env_var || "");
-      setEmbBaseUrl(embRes.base_url);
-      setEmbModel(embRes.model);
-      setEmbDim(embRes.dim);
-      setOriginalEmbProvider(embRes.provider);
+      setEmbProviders(embRes.providers);
+      setEmbActiveId(embRes.active_id);
       setAvailableEmb(availEmbRes.providers);
       setReranker(rerankerRes);
       setOcr({
@@ -241,21 +231,31 @@ export default function SettingsContent() {
   }
 
   // ── Embedding actions ────────────────────────────────────────────────
-  async function handleSaveEmbedding() {
+  async function handleActivateEmb(id: string) {
+    try {
+      const updated = await activateEmbeddingProvider(id);
+      setEmbProviders((prev) =>
+        prev.map((p) => ({ ...p, is_active: p.id === id }))
+      );
+      setEmbActiveId(id);
+    } catch (e: any) {
+      alert("활성화 실패: " + e.message);
+    }
+  }
+
+  async function handleSaveEmbConfig(id: string) {
     setEmbSaving(true);
     setEmbMessage("");
     try {
-      const updated = await updateEmbeddingProvider({
-        provider: embProvider,
-        api_key_env_var: embApiKeyEnvVar || undefined,
-        base_url: embBaseUrl || undefined,
-        model: embModel || undefined,
-        dim: embDim || 0,
-      });
-      setEmbedding(updated);
-      setOriginalEmbProvider(embProvider);
-      setEmbApiKeyEnvVar("");
-      setEmbMessage("✅ 임베딩 설정 저장 완료 — 프로바이더가 전환되었습니다.");
+      const updates: Record<string, string> = {};
+      if (editEmbApiKeyEnvVar) updates.api_key_env_var = editEmbApiKeyEnvVar;
+      const updated = await updateEmbeddingProvider(id, updates);
+      setEmbProviders((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, ...updated } : p))
+      );
+      setEditingEmbId(null);
+      setEditEmbApiKeyEnvVar("");
+      setEmbMessage("✅ 임베딩 설정 저장 완료");
       setTimeout(() => setEmbMessage(""), 5000);
     } catch (e: any) {
       setEmbMessage("❌ 저장 실패: " + e.message);
@@ -284,17 +284,6 @@ export default function SettingsContent() {
     }
   }
 
-  // ── When embedding provider changes, load defaults ───────────────────
-  function handleEmbProviderChange(provider: EmbeddingProvider) {
-    setEmbProvider(provider);
-    const defaults = availableEmb.find((p) => p.provider === provider);
-    if (defaults) {
-      setEmbBaseUrl(defaults.default_base_url || "");
-      setEmbModel(defaults.default_model || "");
-      setEmbDim(defaults.default_dim || 0);
-    }
-  }
-
   // ── When test provider changes, load defaults ────────────────────────
   function handleTestProviderChange(provider: LLMProvider) {
     setTestProvider(provider);
@@ -306,177 +295,137 @@ export default function SettingsContent() {
   }
 
   // 프로바이더 변경 여부
-  const embProviderChanged = embProvider !== originalEmbProvider;
-
-  // 현재 선택된 임베딩 프로바이더의 정보
-  const selectedEmbDefaults = availableEmb.find((p) => p.provider === embProvider);
-  const requiresApiKey = selectedEmbDefaults?.requires_api_key ?? false;
+  const activeEmbProvider = embProviders.find((p) => p.is_active);
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-8">
       <h1 className="text-2xl font-bold">⚙️ 설정</h1>
 
-      {/* ── 임베딩 프로바이더 (상단으로 이동 — 가장 중요) ────────────── */}
+      {/* ── 임베딩 프로바이더 ─────────────────────────────────────────────── */}
       <section>
         <h2 className="text-lg sm:text-xl font-semibold mb-4">🧬 임베딩 프로바이더</h2>
         {embLoading ? (
           <p className="text-gray-500">로딩 중...</p>
         ) : (
-          <div className="space-y-4">
-            {/* 현재 선택된 프로바이더 표시 */}
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium text-gray-600">현재:</span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
-                <span>{EMBEDDING_ICONS[embedding?.provider || "local"] || "📌"}</span>
-                {EMBEDDING_LABELS[embedding?.provider || "local"] || embedding?.provider}
-              </span>
-              {embedding?.model && (
-                <span className="text-sm text-gray-500">({embedding.model})</span>
-              )}
-              {(embedding?.dim ?? 0) > 0 && (
-                <span className="text-xs text-gray-400">{embedding!.dim}차원</span>
-              )}
-            </div>
-
-            {/* 프로바이더 선택 */}
-            <div className="p-4 sm:p-5 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-800 space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1.5">임베딩 모델 선택</label>
-                <select
-                  value={embProvider}
-                  onChange={(e) => handleEmbProviderChange(e.target.value as EmbeddingProvider)}
-                  className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
+          <div className="space-y-3">
+            {embProviders.map((p) => {
+              const embDefaults = availableEmb.find((d) => d.provider === p.provider);
+              const requiresKey = embDefaults?.requires_api_key ?? false;
+              const isEditing = editingEmbId === p.id;
+              return (
+                <div
+                  key={p.id}
+                  className={`p-3 sm:p-4 rounded-lg border ${
+                    p.is_active
+                      ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20 dark:border-blue-600"
+                      : "border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"
+                  }`}
                 >
-                  {availableEmb.map((p) => (
-                    <option key={p.provider} value={p.provider}>
-                      {EMBEDDING_ICONS[p.provider] || "📌"} {EMBEDDING_LABELS[p.provider] || p.provider} — {p.description}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* 선택된 프로바이더 정보 */}
-              {selectedEmbDefaults && (
-                <div className="flex flex-wrap gap-2 text-xs">
-                  {selectedEmbDefaults.default_dim > 0 && (
-                    <span className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
-                      {selectedEmbDefaults.default_dim}차원
-                    </span>
-                  )}
-                  <span className={`px-2 py-1 rounded ${
-                    requiresApiKey
-                      ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
-                      : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
-                  }`}>
-                    {requiresApiKey ? "🔑 API 키 필요" : "✅ API 키 불필요"}
-                  </span>
-                  {embProvider === "local" && (
-                    <span className="px-2 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded">
-                      dense + sparse
-                    </span>
-                  )}
-                  {embProvider !== "local" && (
-                    <span className="px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded">
-                      dense only (sparse → BM25)
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* 프로바이더 변경 경고 */}
-              {embProviderChanged && (
-                <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
-                  <p className="text-sm text-amber-800 dark:text-amber-200">{EMBEDDING_CHANGE_WARNING}</p>
-                </div>
-              )}
-
-              {/* API 키 + 설정 (local이 아닌 경우) */}
-              {embProvider !== "local" && (
-                <div className="space-y-3">
-                  {requiresApiKey && (
-                    <div>
-                      <label className="block text-sm font-medium mb-1.5">
-                        API 키 환경변수명 <span className="text-red-500">*</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={embApiKeyEnvVar}
-                        onChange={(e) => setEmbApiKeyEnvVar(e.target.value)}
-                        placeholder={
-                          embedding?.api_key_status?.is_set
-                            ? `환경변수 설정됨 (${embedding.api_key_status.masked})`
-                            : "환경변수명 입력 (예: OPENAI_API_KEY)"
-                        }
-                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
-                      />
-                      <p className="text-xs text-gray-400 mt-1">
-                        서버에 설정된 환경변수명을 입력하세요 (예: OPENAI_API_KEY)
-                      </p>
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xl">
+                        {EMBEDDING_ICONS[p.provider] || "📌"}
+                      </span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{p.name || EMBEDDING_LABELS[p.provider] || p.provider}</span>
+                          {p.is_active && (
+                            <span className="text-xs px-2 py-0.5 bg-blue-100 dark:bg-blue-800 text-blue-700 dark:text-blue-300 rounded-full">
+                              활성
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {p.dim > 0 && (
+                            <span className="text-xs px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">
+                              {p.dim}차원
+                            </span>
+                          )}
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${
+                            requiresKey
+                              ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300"
+                              : "bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300"
+                          }`}>
+                            {requiresKey ? "🔑 API 키 필요" : "✅ 키 불필요"}
+                          </span>
+                          {p.provider === "local" && (
+                            <span className="text-xs px-1.5 py-0.5 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded">
+                              dense+sparse
+                            </span>
+                          )}
+                          {p.api_key_status?.is_set && (
+                            <span className="text-xs px-1.5 py-0.5 bg-gray-100 dark:bg-gray-700 rounded">
+                              키 설정됨 ({p.api_key_status.masked})
+                            </span>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                  )}
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-sm font-medium mb-1.5">Base URL</label>
-                      <input
-                        type="text"
-                        value={embBaseUrl}
-                        onChange={(e) => setEmbBaseUrl(e.target.value)}
-                        placeholder="프로바이더 기본 URL 사용 시 빈칸"
-                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1.5">모델명</label>
-                      <input
-                        type="text"
-                        value={embModel}
-                        onChange={(e) => setEmbModel(e.target.value)}
-                        placeholder="프로바이더 기본 모델 사용 시 빈칸"
-                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
-                      />
+                    <div className="flex items-center gap-2">
+                      {!p.is_active && (
+                        <button
+                          onClick={() => handleActivateEmb(p.id)}
+                          className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition-colors min-h-[32px]"
+                        >
+                          활성화
+                        </button>
+                      )}
+                      {requiresKey && (
+                        <button
+                          onClick={() => {
+                            setEditingEmbId(isEditing ? null : p.id);
+                            setEditEmbApiKeyEnvVar(p.api_key_env_var || "");
+                          }}
+                          className="px-3 py-1.5 text-xs border border-gray-300 dark:border-gray-600 rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors min-h-[32px]"
+                        >
+                          {isEditing ? "닫기" : "⚙️ 설정"}
+                        </button>
+                      )}
                     </div>
                   </div>
-
-                  {embDim > 0 && (
-                    <div>
-                      <label className="block text-sm font-medium mb-1.5">임베딩 차원</label>
-                      <input
-                        type="number"
-                        value={embDim}
-                        onChange={(e) => setEmbDim(Number(e.target.value))}
-                        className="w-full px-3 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
-                      />
+                  {/* 편집 폼 */}
+                  {isEditing && (
+                    <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 space-y-3">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">
+                          API 키 환경변수명
+                        </label>
+                        <input
+                          type="text"
+                          value={editEmbApiKeyEnvVar}
+                          onChange={(e) => setEditEmbApiKeyEnvVar(e.target.value)}
+                          placeholder="예: OPENAI_API_KEY"
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 dark:text-gray-200 min-h-[44px]"
+                        />
+                        <p className="text-xs text-gray-400 mt-1">
+                          서버에 설정된 환경변수명을 입력하세요
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleSaveEmbConfig(p.id)}
+                        disabled={embSaving}
+                        className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50 min-h-[44px]"
+                      >
+                        {embSaving ? "저장 중..." : "💾 저장"}
+                      </button>
+                    </div>
+                  )}
+                  {/* 프로바이더 변경 경고 */}
+                  {p.provider === "local" && p.is_active && (
+                    <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded text-xs text-blue-800 dark:text-blue-200">
+                      🏠 <strong>bge-m3</strong> — 로컬 다국어 임베딩. dense(1024)+sparse 하이브리드 검색 지원.
                     </div>
                   )}
                 </div>
-              )}
-
-              {/* 로컬 bge-m3 설명 */}
-              {embProvider === "local" && (
-                <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 rounded-lg">
-                  <p className="text-sm text-blue-800 dark:text-blue-200">
-                    🏠 <strong>bge-m3</strong> — 로컬에서 실행되는 다국어 임베딩 모델입니다.
-                    dense(1024차원) + sparse 벡터를 모두 생성하여 하이브리드 검색(RRF)을 지원합니다.
-                    별도 API 키가 필요하지 않습니다.
-                  </p>
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-3">
-                <button
-                  onClick={handleSaveEmbedding}
-                  disabled={embSaving || (requiresApiKey && !embApiKeyEnvVar && !(embedding?.api_key_status?.is_set))}
-                  className="px-5 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm disabled:opacity-50 min-h-[44px]"
-                >
-                  {embSaving ? "저장 중..." : "💾 임베딩 설정 저장"}
-                </button>
-                {embMessage && (
-                  <span className={`text-sm ${embMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
-                    {embMessage}
-                  </span>
-                )}
-              </div>
+              );
+            })}
+            {embMessage && (
+              <p className={`text-sm ${embMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
+                {embMessage}
+              </p>
+            )}
+            <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
+              <p className="text-xs text-amber-800 dark:text-amber-200">{EMBEDDING_CHANGE_WARNING}</p>
             </div>
           </div>
         )}

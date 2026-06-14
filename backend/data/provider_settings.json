@@ -4,7 +4,7 @@
       "id": "ollama-cloud",
       "provider": "ollama",
       "name": "Ollama Cloud",
-      "api_key_env_var": "",
+      "api_key_env_var": "OLLAMA_API_KEY",
       "base_url": "https://ollama.com/api/chat",
       "model": "glm-5.1",
       "is_active": true,
@@ -21,7 +21,7 @@
       "api_key_env_var": "DEEPSEEK_API_KEY",
       "base_url": "https://api.deepseek.com/v1",
       "model": "deepseek-chat",
-      "is_active": false,
+      "is_active": true,
       "temperature": 0.1,
       "max_tokens": 2048,
       "fallback_provider_id": "",
@@ -29,28 +29,73 @@
       "updated_at": "2026-06-09T05:37:31.669386+00:00"
     },
     {
-      "id": "provider-3",
+      "id": "open-ai",
       "provider": "openai",
       "name": "",
       "api_key_env_var": "OPENAI_API_KEY",
       "base_url": "",
       "model": "",
-      "is_active": false,
+      "is_active": true,
       "temperature": 0.1,
       "max_tokens": 2048,
-      "fallback_provider_id": "",
+      "fallback_provider_id": "deepseek",
       "created_at": "2026-06-09T05:38:11.572555+00:00",
       "updated_at": "2026-06-09T05:38:11.572662+00:00"
     }
   ],
-  "embedding": {
-    "provider": "local",
-    "api_key_env_var": "",
-    "base_url": "",
-    "model": "",
-    "dim": 0
-  },
-  "llm_provider": "ollama-cloud",
+  "embedding_providers": [
+    {
+      "id": "emb-local",
+      "provider": "local",
+      "name": "bge-m3 로컬 임베딩",
+      "api_key_env_var": "",
+      "base_url": "",
+      "model": "",
+      "dim": 0,
+      "is_active": true
+    },
+    {
+      "id": "emb-openai",
+      "provider": "openai",
+      "name": "OpenAI text-embedding-3-small",
+      "api_key_env_var": "OPENAI_API_KEY",
+      "base_url": "https://api.openai.com/v1",
+      "model": "text-embedding-3-small",
+      "dim": 1536,
+      "is_active": false
+    },
+    {
+      "id": "emb-jina",
+      "provider": "jina",
+      "name": "Jina jina-embeddings-v3",
+      "api_key_env_var": "JINA_API_KEY",
+      "base_url": "https://api.jina.ai/v1",
+      "model": "jina-embeddings-v3",
+      "dim": 1024,
+      "is_active": false
+    },
+    {
+      "id": "emb-ollama",
+      "provider": "ollama",
+      "name": "로컬 Ollama 임베딩",
+      "api_key_env_var": "",
+      "base_url": "http://localhost:11434",
+      "model": "nomic-embed-text",
+      "dim": 768,
+      "is_active": false
+    },
+    {
+      "id": "emb-cohere",
+      "provider": "cohere",
+      "name": "Cohere embed-multilingual-v3.0",
+      "api_key_env_var": "COHERE_API_KEY",
+      "base_url": "https://api.cohere.ai/v1",
+      "model": "embed-multilingual-v3.0",
+      "dim": 1024,
+      "is_active": false
+    }
+  ],
+  "llm_provider": "open-ai",
   "deepseek_base_url": "https://api.deepseek.com/v1",
   "deepseek_model": "deepseek-chat",
   "ollama_base_url": "http://localhost:11434",

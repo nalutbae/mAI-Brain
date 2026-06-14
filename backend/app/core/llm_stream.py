@@ -273,10 +273,25 @@ class LLMStreamClient:
                 "num_predict": max_tokens,
             },
         }
+        logger.debug(
+            "Ollama 네이티브 스트리밍 요청: url=%s, model=%s, msg_count=%d, api_key=%s",
+            base_url, model, len(messages), "***" if api_key else "(empty)",
+        )
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(self._timeout, read=180.0)) as client:
             async with client.stream("POST", base_url, headers=headers, json=payload) as response:
-                response.raise_for_status()
+                if response.status_code >= 400:
+                    error_body = await response.aread()
+                    error_text = error_body.decode("utf-8", errors="replace")[:500]
+                    logger.warning(
+                        "Ollama 네이티브 스트리밍 오류: %d %s (url=%s, body=%s)",
+                        response.status_code, response.reason_phrase, base_url, error_text,
+                    )
+                    raise httpx.HTTPStatusError(
+                        f"{response.status_code} {response.reason_phrase}: {error_text}",
+                        request=response.request,
+                        response=response,
+                    )
                 async for line in response.aiter_lines():
                     line = line.strip()
                     if not line:

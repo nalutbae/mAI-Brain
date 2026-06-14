@@ -373,7 +373,7 @@ def get_embedding_provider(force_new: bool = False) -> EmbeddingProvider:
         return _provider_instance
 
     store = ProviderSettingsStore.get()
-    emb_config = store.get_settings().embedding
+    emb_config = store.get_active_embedding_provider()
     provider = emb_config.provider
 
     if provider == EmbeddingProviderType.LOCAL:

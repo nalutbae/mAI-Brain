@@ -203,7 +203,9 @@ class LLMProviderConfig(BaseModel):
 
 class EmbeddingProviderConfig(BaseModel):
     """임베딩 프로바이더 설정"""
+    id: str = Field(default="emb-local", description="프로바이더 설정 ID")
     provider: EmbeddingProviderType = Field(default=EmbeddingProviderType.LOCAL)
+    name: str = Field(default="", description="사용자 정의 이름 (빈값 → 기본 이름)")
     api_key_env_var: str = Field(
         default="",
         description="API 키를 로드할 환경변수명. 빈값 → 프로바이더 기본 환경변수 사용",
@@ -211,6 +213,7 @@ class EmbeddingProviderConfig(BaseModel):
     base_url: str = Field(default="", description="빈값 → 프로바이더 기본 URL")
     model: str = Field(default="", description="빈값 → 프로바이더 기본 모델")
     dim: int = Field(default=0, description="임베딩 차원 (0 → 프로바이더 기본값)")
+    is_active: bool = Field(default=False, description="현재 활성 프로바이더 여부")
 
     # ── 레거시 호환: 기존 JSON에 api_key가 있으면 읽어들여 마이그레이션 ──
     api_key: str = Field(
@@ -231,11 +234,40 @@ class EmbeddingProviderConfig(BaseModel):
             return os.environ.get(env_var, "")
         return ""
 
+    def get_effective_base_url(self) -> str:
+        """빈값이면 프로바이더 기본 URL 반환"""
+        if self.base_url:
+            return self.base_url
+        info = EMBEDDING_PROVIDER_DEFAULTS.get(self.provider.value, {})
+        return info.get("default_base_url", "")
+
+    def get_effective_model(self) -> str:
+        """빈값이면 프로바이더 기본 모델 반환"""
+        if self.model:
+            return self.model
+        info = EMBEDDING_PROVIDER_DEFAULTS.get(self.provider.value, {})
+        return info.get("default_model", "")
+
+    def get_effective_dim(self) -> int:
+        """0이면 프로바이더 기본 차원 반환"""
+        if self.dim > 0:
+            return self.dim
+        info = EMBEDDING_PROVIDER_DEFAULTS.get(self.provider.value, {})
+        return info.get("default_dim", 0)
+
+    def get_display_name(self) -> str:
+        """표시용 이름"""
+        if self.name:
+            return self.name
+        return f"{self.provider.value} / {self.get_effective_model()}"
+
 
 class AppSettings(BaseModel):
     """애플리케이션 전체 설정 (LLM + 임베딩)"""
     llm_providers: list[LLMProviderConfig] = Field(default_factory=list)
-    embedding: EmbeddingProviderConfig = Field(default_factory=EmbeddingProviderConfig)
+    embedding_providers: list[EmbeddingProviderConfig] = Field(default_factory=list)
+    # 레거시: 기존 JSON에서 단일 embedding 객체가 들어오면 마이그레이션
+    embedding: Optional[EmbeddingProviderConfig] = Field(default=None, exclude=True)
     # 호환성: 기존 .env 설정값을 유지
     llm_provider: str = Field(default="ollama-cloud", description="레거시 LLM_PROVIDER 값")
     deepseek_api_key: str = Field(default="", exclude=True, description="[레거시] .env에서 읽은 키")
@@ -328,20 +360,56 @@ class ProviderSettingsStore:
                     migrated = True
                 # 평문 api_key는 model_dump에서 exclude=True이므로 저장 시 자동 제거됨
 
-        emb = self._data.embedding
-        if emb.api_key and not emb.api_key_env_var:
-            info = EMBEDDING_PROVIDER_DEFAULTS.get(emb.provider.value, {})
-            env_var = info.get("api_key_env_var", "")
-            if env_var:
-                emb.api_key_env_var = env_var
-                if not os.environ.get(env_var):
-                    import logging
-                    logging.getLogger(__name__).warning(
-                        "마이그레이션: %s 임베딩 프로바이더의 API 키를 환경변수 %s로 이전했습니다. "
-                        ".env 파일에 %s=<키값>을 추가하세요.",
-                        emb.provider.value, env_var, env_var,
-                    )
-                migrated = True
+        # 임베딩: 레거시 단일 embedding → embedding_providers 배열 마이그레이션
+        legacy_emb = self._data.embedding
+        if legacy_emb and not self._data.embedding_providers:
+            # 기존 단일 embedding 설정을 배열로 변환
+            legacy_emb.is_active = True
+            self._data.embedding_providers = self._build_default_embedding_providers(
+                active_provider=legacy_emb.provider.value,
+            )
+            # 기존 설정값 덮어쓰기
+            for ep in self._data.embedding_providers:
+                if ep.provider == legacy_emb.provider:
+                    ep.api_key_env_var = legacy_emb.api_key_env_var or ep.api_key_env_var
+                    ep.base_url = legacy_emb.base_url or ep.base_url
+                    ep.model = legacy_emb.model or ep.model
+                    ep.dim = legacy_emb.dim or ep.dim
+                    ep.is_active = True
+                    break
+            # 레거시 임베딩 api_key 마이그레이션
+            if legacy_emb.api_key and not legacy_emb.api_key_env_var:
+                info = EMBEDDING_PROVIDER_DEFAULTS.get(legacy_emb.provider.value, {})
+                env_var = info.get("api_key_env_var", "")
+                if env_var:
+                    for ep in self._data.embedding_providers:
+                        if ep.provider == legacy_emb.provider:
+                            ep.api_key_env_var = env_var
+                            break
+            migrated = True
+        elif not self._data.embedding_providers:
+            # JSON에 embedding_providers가 없고 레거시 embedding도 없으면
+            # 기본 5개 프로바이더 생성 (local 활성)
+            self._data.embedding_providers = self._build_default_embedding_providers(
+                active_provider="local",
+            )
+            migrated = True
+
+        # embedding_providers 내 평문 api_key 마이그레이션
+        for ep in self._data.embedding_providers:
+            if ep.api_key and not ep.api_key_env_var:
+                info = EMBEDDING_PROVIDER_DEFAULTS.get(ep.provider.value, {})
+                env_var = info.get("api_key_env_var", "")
+                if env_var:
+                    ep.api_key_env_var = env_var
+                    if not os.environ.get(env_var):
+                        import logging
+                        logging.getLogger(__name__).warning(
+                            "마이그레이션: %s 임베딩 프로바이더의 API 키를 환경변수 %s로 이전했습니다. "
+                            ".env 파일에 %s=<키값>을 추가하세요.",
+                            ep.provider.value, env_var, env_var,
+                        )
+                    migrated = True
 
     def _save(self) -> None:
         """JSON 파일에 설정 저장."""
@@ -386,29 +454,17 @@ class ProviderSettingsStore:
 
         self._data.llm_providers = [ollama_provider, deepseek_provider]
 
-        # 임베딩 설정 (레거시 .env에서)
+        # 임베딩 설정: 5개 프로바이더 모두 초기화
+        # 레거시 .env에서 활성 프로바이더 결정
         provider_str = self._data.llm_provider  # ollama-cloud / deepseek
-        emb_provider = EmbeddingProviderType.LOCAL
+        active_emb = "local"
         if provider_str == "api" or os.environ.get("EMBEDDING_PROVIDER") == "api":
-            emb_provider = EmbeddingProviderType.OPENAI
+            active_emb = "openai"
         elif provider_str == "ollama" or os.environ.get("EMBEDDING_PROVIDER") == "ollama":
-            emb_provider = EmbeddingProviderType.OLLAMA
+            active_emb = "ollama"
 
-        # 임베딩 API 키도 환경변수명만 저장
-        emb_env_var = ""
-        if emb_provider == EmbeddingProviderType.OPENAI:
-            emb_env_var = "OPENAI_API_KEY"
-        elif emb_provider == EmbeddingProviderType.JINA:
-            emb_env_var = "JINA_API_KEY"
-        elif emb_provider == EmbeddingProviderType.COHERE:
-            emb_env_var = "COHERE_API_KEY"
-
-        self._data.embedding = EmbeddingProviderConfig(
-            provider=emb_provider,
-            api_key_env_var=emb_env_var,
-            base_url=os.environ.get("EMBEDDING_API_BASE_URL", ""),
-            model=os.environ.get("EMBEDDING_API_MODEL", ""),
-            dim=int(os.environ.get("OLLAMA_EMBEDDING_DIM", "0") or "0"),
+        self._data.embedding_providers = self._build_default_embedding_providers(
+            active_provider=active_emb,
         )
 
     # ── 프로바이더 CRUD ──────────────────────────────────────────────
@@ -497,11 +553,71 @@ class ProviderSettingsStore:
             return self.get_active_llm_provider()
         return None
 
-    def update_embedding_provider(self, config: EmbeddingProviderConfig) -> EmbeddingProviderConfig:
+    # ── 임베딩 프로바이더 CRUD ──────────────────────────────────────────
+
+    @staticmethod
+    def _build_default_embedding_providers(active_provider: str = "local") -> list[EmbeddingProviderConfig]:
+        """5개 기본 임베딩 프로바이더 생성. active_provider에 해당하는 항목만 is_active=True."""
+        configs = []
+        for key, info in EMBEDDING_PROVIDER_DEFAULTS.items():
+            configs.append(EmbeddingProviderConfig(
+                id=f"emb-{key}",
+                provider=EmbeddingProviderType(key),
+                name=info.get("description", key).split("(")[0].strip(),
+                api_key_env_var=info.get("api_key_env_var", ""),
+                base_url=info.get("default_base_url", ""),
+                model=info.get("default_model", ""),
+                dim=info.get("default_dim", 0),
+                is_active=(key == active_provider),
+            ))
+        return configs
+
+    def get_active_embedding_provider(self) -> EmbeddingProviderConfig:
+        """현재 활성 임베딩 프로바이더 반환."""
+        for p in self._data.embedding_providers:
+            if p.is_active:
+                return p
+        # 활성이 없으면 첫 번째 반환
+        if self._data.embedding_providers:
+            return self._data.embedding_providers[0]
+        # 마지막 리소트: local
+        return EmbeddingProviderConfig(
+            id="emb-local",
+            provider=EmbeddingProviderType.LOCAL,
+            name="bge-m3",
+            is_active=True,
+        )
+
+    def set_active_embedding_provider(self, provider_id: str) -> Optional[EmbeddingProviderConfig]:
+        """활성 임베딩 프로바이더 변경."""
+        found = False
+        for i, p in enumerate(self._data.embedding_providers):
+            if p.id == provider_id:
+                self._data.embedding_providers[i] = p.model_copy(update={"is_active": True})
+                found = True
+            else:
+                self._data.embedding_providers[i] = p.model_copy(update={"is_active": False})
+        if found:
+            self._save()
+            return self.get_active_embedding_provider()
+        return None
+
+    def update_embedding_provider_config(self, provider_id: str, updates: dict) -> Optional[EmbeddingProviderConfig]:
         """임베딩 프로바이더 설정 업데이트."""
-        self._data.embedding = config
-        self._save()
-        return config
+        for i, p in enumerate(self._data.embedding_providers):
+            if p.id == provider_id:
+                updated = p.model_copy(update=updates)
+                # 활성으로 설정 시 다른 프로바이더 비활성화
+                if updates.get("is_active"):
+                    for j, other in enumerate(self._data.embedding_providers):
+                        if j != i:
+                            self._data.embedding_providers[j] = other.model_copy(
+                                update={"is_active": False}
+                            )
+                self._data.embedding_providers[i] = updated
+                self._save()
+                return updated
+        return None
 
     # ── 프로바이더 목록 조회 ────────────────────────────────────────
 
