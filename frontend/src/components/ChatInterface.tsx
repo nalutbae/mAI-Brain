@@ -18,6 +18,7 @@ import type { CrossReasoningReport } from "../lib/cross-reasoning";
 
 interface ChatInterfaceProps {
   sessionId?: string;
+  workspaceId?: string | null;
   onSessionStart?: (sessionId: string) => void;
 }
 
@@ -39,7 +40,7 @@ const FEEDBACK_TAGS: { value: ApiFeedbackTag; label: string }[] = [
 
 const AGENT_TRIGGER = "@agent";
 
-export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfaceProps) {
+export default function ChatInterface({ sessionId, workspaceId, onSessionStart }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ChatMode>("fact");
@@ -199,6 +200,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
         question: question || input.trim(),
         mode: "fact",
         session_id: sessionId,
+        ...(workspaceId && { workspace_id: workspaceId }),
       });
 
       const aiMessage: Message = {
@@ -280,6 +282,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
           question: userMessage.content,
           mode,
           session_id: sessionId,
+          ...(workspaceId && { workspace_id: workspaceId }),
           ...((mode === "reasoning" || mode === "column") && { reasoning_strength: reasoningStrength }),
         },
         {
@@ -356,6 +359,7 @@ export default function ChatInterface({ sessionId, onSessionStart }: ChatInterfa
           question: userMessage.content,
           mode,
           session_id: sessionId,
+          ...(workspaceId && { workspace_id: workspaceId }),
           ...((mode === "reasoning" || mode === "column") && { reasoning_strength: reasoningStrength }),
         });
 

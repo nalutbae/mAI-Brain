@@ -111,6 +111,7 @@ def hybrid_search(
     session_id: Optional[str] = None,
     vdb: Optional[VectorDBProvider] = None,
     collection_name: Optional[str] = None,
+    workspace_doc_ids: Optional[list[str]] = None,
     query_expansion: Optional[str] = None,
 ) -> SearchResult:
     """벡터 DB 검색 + 리랭킹 수행.
@@ -128,6 +129,9 @@ def hybrid_search(
         session_id: 세션 ID (향후 세션별 필터링용, 현재 미사용)
         vdb: 벡터 DB 프로바이더 (None이면 기본 인스턴스)
         collection_name: 검색 대상 컬렉션 이름 (None이면 기본 컬렉션)
+        workspace_doc_ids: 워크스페이스에 할당된 문서 ID 목록.
+            지정 시 워크스페이스 컬렉션이 비어있으면 기본 컬렉션에서
+            해당 문서만 필터링하여 검색합니다.
         query_expansion: 쿼리 확장 전략
             "multi_query" | "hyde" | "korean_synonyms" | "auto" | None
 
@@ -212,10 +216,37 @@ def hybrid_search(
         collection_name=collection_name,
     )
 
+    # 워크스페이스 컬렉션 검색 결과가 없으면 기본 컬렉션에서 필터링
+    fallback_to_default = False
+    if not results and collection_name and workspace_doc_ids:
+        logger.info(
+            "워크스페이스 컬렉션 결과 없음: %s → 기본 컬렉션에서 검색 후 필터링",
+            collection_name,
+        )
+        results = _vdb.search(
+            query_dense=query_dense,
+            query_sparse=query_sparse,
+            limit=initial_k,
+            collection_name=None,  # 기본 컬렉션
+        )
+        fallback_to_default = True
+
     # 3. 검색 결과 변환 (VectorDBProvider.SearchHit → chat.SearchHit)
+    # 워크스페이스 폴백: 전용 컬렉션이 비어 기본 컬렉션에서 검색한 경우,
+    # 워크스페이스에 할당된 문서만 필터링
+    filtered_from_default = (
+        fallback_to_default
+        and workspace_doc_ids is not None
+        and len(workspace_doc_ids) > 0
+    )
     hits: list[SearchHit] = []
     for hit in results:
         payload = hit.payload
+        if filtered_from_default:
+            doc_id = payload.get("document_id", "")
+            if doc_id and doc_id not in workspace_doc_ids:
+                continue
+
         hits.append(SearchHit(
             text=payload.get("text", ""),
             source=payload.get("source", "알 수 없음"),

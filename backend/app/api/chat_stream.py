@@ -98,10 +98,15 @@ async def stream_chat(request: ChatRequest, req: Request):
 
     # 2. 워크스페이스 컬렉션 결정
     collection_name = None
+    workspace_doc_ids: list[str] | None = None
     if request.workspace_id:
         from app.core.workspace import get_workspace_store
         ws_store = get_workspace_store()
         collection_name = ws_store.get_collection_name(request.workspace_id)
+        # 워크스페이스에 할당된 문서 ID 목록 (폴백 필터링용)
+        workspace = ws_store.get_workspace(request.workspace_id)
+        if workspace:
+            workspace_doc_ids = workspace.document_ids
 
     # 3. 하이브리드 검색 (creative 모드는 검색 생략)
     is_creative = request.mode == ChatMode.CREATIVE
@@ -113,6 +118,7 @@ async def stream_chat(request: ChatRequest, req: Request):
                 mode=request.mode,
                 session_id=session_id,
                 collection_name=collection_name,
+                workspace_doc_ids=workspace_doc_ids,
                 query_expansion=request.query_expansion,
             )
         except Exception as exc:

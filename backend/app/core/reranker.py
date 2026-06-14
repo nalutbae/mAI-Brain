@@ -3,23 +3,24 @@
 검색 결과를 질문과의 관련성 순으로 재정렬합니다.
 
 설계:
-- FlagEmbedding bge-reranker-v2-m3 모델 사용 (bge-m3 임베딩과 동일 계열)
+- BAAI/bge-reranker-v2-m3 모델을 직접 로드하여 사용
+- transformers의 AutoModelForSequenceClassification + AutoTokenizer 사용
+- FlagEmbedding 라이브러리 의존성 제거 (transformers 5.x 호환성)
 - MPS(Apple Silicon) / CUDA(NVIDIA) 자동 감지 및 가속
 - 리랭커가 비활성화된 경우 투과(pass-through) 처리
 - 초기 검색에서 더 많은 후보를 가져온 후 리랭크하여 최종 k개 선택
 
 파이프라인:
   hybrid_search(top_k_initial=20~30) → rerank() → top_k_final(5~12)
-
-지원 모델:
-- BAAI/bge-reranker-v2-m3 (기본, 한국어+다국어)
-- FlagEmbedding의 FlagReranker 래퍼 사용
 """
 
 from __future__ import annotations
 
 import logging
 from typing import Optional
+
+import torch
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 from app.config import ChatMode, get_settings
 from app.models.chat import SearchHit
@@ -30,14 +31,17 @@ logger = logging.getLogger(__name__)
 class Reranker:
     """검색 결과 재정렬 (re-ranking) 모듈.
 
-    bge-reranker-v2-m3 모델을 사용하여 질문-문서 쌍의 관련성 점수를
+    bge-reranker-v2-m3 모델을 직접 사용하여 질문-문서 쌍의 관련성 점수를
     재계산하고, 점수 순으로 결과를 재정렬합니다.
+    FlagEmbedding 래퍼 대신 transformers 모델을 직접 로드하여
+    transformers 5.x 호환성을 확보합니다.
     """
 
     def __init__(self, model_name: str | None = None) -> None:
         self._model_name = model_name or "BAAI/bge-reranker-v2-m3"
         self._device = self._detect_device()
-        self._model = None
+        self._tokenizer: AutoTokenizer | None = None
+        self._model: AutoModelForSequenceClassification | None = None
         self._initialized = False
         logger.info(
             "Reranker 초기화 예약: model=%s, device=%s (지연 로드)",
@@ -48,7 +52,6 @@ class Reranker:
     def _detect_device() -> str:
         """사용 가능한 가속기 자동 감지 (CUDA → MPS → CPU)."""
         try:
-            import torch  # noqa: PLC0415
             if torch.cuda.is_available():
                 return "cuda"
             if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
@@ -62,22 +65,18 @@ class Reranker:
         if self._initialized:
             return
 
-        try:
-            from FlagEmbedding import FlagReranker  # noqa: PLC0415
-        except ImportError:
-            raise ImportError(
-                "FlagEmbedding 패키지가 필요합니다: pip install FlagEmbedding"
-            )
-
         logger.info(
             "Reranker 모델 로드 시작: %s (device=%s)",
             self._model_name, self._device,
         )
-        self._model = FlagReranker(
-            self._model_name,
-            use_fp16=True,
-            device=self._device,
-        )
+        self._tokenizer = AutoTokenizer.from_pretrained(self._model_name)
+        self._model = AutoModelForSequenceClassification.from_pretrained(self._model_name)
+
+        if self._device == "cuda":
+            self._model = self._model.half()  # fp16 on GPU
+        self._model = self._model.to(self._device)
+        self._model.eval()
+
         self._initialized = True
         logger.info("Reranker 모델 로드 완료")
 
@@ -105,27 +104,35 @@ class Reranker:
         self._ensure_model()
 
         # 질문-문서 쌍 구성
-        pairs = [(query, hit.text) for hit in hits]
+        queries = [query] * len(hits)
+        passages = [hit.text for hit in hits]
 
-        # 리랭크 점수 계산
-        logger.info("리랭크 시작: %d개 문서, query='%s'", len(pairs), query[:50])
-        raw_scores = self._model.compute_score(pairs)  # type: ignore[union-attr]
+        logger.info("리랭크 시작: %d개 문서, query='%s'", len(hits), query[:50])
 
-        # FlagReranker는 float, list[float], ndarray 등 다양한 타입 반환 가능
-        import numpy as np  # noqa: PLC0415
+        # 토크나이즈 + 스코어 계산 (배치)
+        all_scores: list[float] = []
+        batch_size = 32  # 메모리 절약을 위한 배치 처리
 
-        if isinstance(raw_scores, np.ndarray):
-            scores_list: list[float] = raw_scores.tolist()  # type: ignore[assignment]
-        elif isinstance(raw_scores, list):
-            scores_list = [float(s) for s in raw_scores]
-        elif isinstance(raw_scores, (int, float)):
-            scores_list = [float(raw_scores)]
-        else:
-            scores_list = [float(raw_scores)]  # type: ignore[arg-type]
+        with torch.no_grad():
+            for i in range(0, len(queries), batch_size):
+                batch_queries = queries[i:i + batch_size]
+                batch_passages = passages[i:i + batch_size]
+
+                features = self._tokenizer(
+                    batch_queries,
+                    batch_passages,
+                    max_length=512,
+                    truncation=True,
+                    padding=True,
+                    return_tensors="pt",
+                )
+                features = {k: v.to(self._device) for k, v in features.items()}
+                scores = self._model(**features).logits.squeeze(-1).float().sigmoid()
+                all_scores.extend(scores.cpu().tolist())
 
         # 점수 반영하여 SearchHit 재구성
         reranked: list[SearchHit] = []
-        for hit, score in zip(hits, scores_list):
+        for hit, score in zip(hits, all_scores):
             reranked.append(SearchHit(
                 text=hit.text,
                 source=hit.source,
@@ -161,8 +168,11 @@ class Reranker:
         if self._model is not None:
             del self._model
             self._model = None
-            self._initialized = False
-            logger.info("Reranker 모델 해제 완료")
+        if self._tokenizer is not None:
+            del self._tokenizer
+            self._tokenizer = None
+        self._initialized = False
+        logger.info("Reranker 모델 해제 완료")
 
 
 # --------------------------------------------------------------------------- #
@@ -187,13 +197,11 @@ RERANK_FINAL_K = {
     ChatMode.CREATIVE: 0,
 }
 
-
 # --------------------------------------------------------------------------- #
 # 싱글톤
 # --------------------------------------------------------------------------- #
 
 _reranker_instance: Optional[Reranker] = None
-
 
 def get_reranker() -> Reranker | None:
     """리랭커 인스턴스 반환.
@@ -214,7 +222,6 @@ def get_reranker() -> Reranker | None:
         _reranker_instance = Reranker(model_name=model_name)
 
     return _reranker_instance
-
 
 def reset_reranker() -> None:
     """리랭커 싱글톤 초기화 (설정 변경 시 사용)."""

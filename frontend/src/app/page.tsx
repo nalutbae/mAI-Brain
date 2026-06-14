@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import ChatInterface from "../components/ChatInterface";
 import SessionList from "../components/SessionList";
-import { Session, getSessions, createSession, downloadAllSessionsExport, type ExportFormat } from "../lib/api";
+import { Session, getSessions, createSession, downloadAllSessionsExport, type ExportFormat, listWorkspaces, type Workspace } from "../lib/api";
 
 export default function Home() {
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -11,10 +11,22 @@ export default function Home() {
   const [isLoading, setIsLoading] = useState(true);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const [selectedWorkspaceId, setSelectedWorkspaceId] = useState<string | null>(null);
 
   useEffect(() => {
     loadSessions();
+    loadWorkspaces();
   }, []);
+
+  const loadWorkspaces = async () => {
+    try {
+      const data = await listWorkspaces();
+      setWorkspaces(data.workspaces);
+    } catch (error) {
+      console.error("Failed to load workspaces:", error);
+    }
+  };
 
   const loadSessions = async () => {
     try {
@@ -78,15 +90,37 @@ export default function Home() {
       />
       <div className="flex-1 flex flex-col">
         <header className="border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              mAI-Brain
-            </h1>
-            {currentSessionId && (
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-                세션 ID: {currentSessionId}
-              </p>
-            )}
+          <div className="flex items-center gap-4">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+                mAI-Brain
+              </h1>
+              {currentSessionId && (
+                <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                  세션 ID: {currentSessionId}
+                </p>
+              )}
+            </div>
+            {/* 워크스페이스 선택 */}
+            <div className="relative">
+              <select
+                value={selectedWorkspaceId || ""}
+                onChange={(e) => setSelectedWorkspaceId(e.target.value || null)}
+                className="appearance-none bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200 text-sm rounded-lg px-3 py-2 pr-8 border border-gray-200 dark:border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="">전체 문서</option>
+                {workspaces.map((ws) => (
+                  <option key={ws.id} value={ws.id}>
+                    {ws.name}
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2">
+                <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                </svg>
+              </div>
+            </div>
           </div>
 
           {/* 전체 대화 내보내기 */}
@@ -157,6 +191,7 @@ export default function Home() {
         </header>
         <ChatInterface
           sessionId={currentSessionId || undefined}
+          workspaceId={selectedWorkspaceId}
           onSessionStart={handleSessionStart}
         />
       </div>

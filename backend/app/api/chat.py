@@ -104,10 +104,15 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
 
     # 1.5 워크스페이스 컬렉션 결정
     collection_name = None
+    workspace_doc_ids: list[str] | None = None
     if request.workspace_id:
         from app.core.workspace import get_workspace_store
         ws_store = get_workspace_store()
         collection_name = ws_store.get_collection_name(request.workspace_id)
+        # 워크스페이스에 할당된 문서 ID 목록 (폴백 필터링용)
+        workspace = ws_store.get_workspace(request.workspace_id)
+        if workspace:
+            workspace_doc_ids = workspace.document_ids
         logger.info("워크스페이스 검색: workspace_id=%s, collection=%s",
                      request.workspace_id, collection_name)
 
@@ -122,6 +127,7 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
                 mode=request.mode,
                 session_id=session_id,
                 collection_name=collection_name,
+                workspace_doc_ids=workspace_doc_ids,
                 query_expansion=request.query_expansion,
             )
         except Exception as exc:

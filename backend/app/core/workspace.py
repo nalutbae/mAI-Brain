@@ -162,9 +162,13 @@ class WorkspaceStore:
                 logger.info("컬렉션 이미 존재: %s", collection_name)
                 return True
 
-            from app.config import EmbeddingProviderType, get_settings
-            settings = get_settings()
-            vector_size = qdrant.vector_size
+            # 실제 임베딩 프로바이더에서 차원 감지 (Settings 기본값 대신)
+            from app.core.embedding import get_embedding_provider
+            try:
+                emb = get_embedding_provider()
+                vector_size = emb.encode(["dim probe"]).dim
+            except Exception:
+                vector_size = qdrant.vector_size  # 폴백: 설정 기반 차원
 
             qdrant.client.create_collection(
                 collection_name=collection_name,
@@ -212,12 +216,16 @@ class WorkspaceStore:
         """워크스페이스의 Qdrant 컬렉션 이름 반환.
         
         워크스페이스가 없으면 기본 컬렉션 이름 반환.
+        컬렉션이 존재하지 않으면 자동 생성 (임베딩 차원 불일치 방지).
         """
         workspace = self._workspaces.get(workspace_id)
         if workspace and workspace.vector_collection:
+            # 컬렉션이 존재하는지 확인, 없으면 생성
+            self._ensure_collection(workspace.vector_collection)
             return workspace.vector_collection
         # 기본 워크스페이스의 컬렉션
-        return self.get_default_workspace().vector_collection
+        default = self.get_default_workspace()
+        return default.vector_collection
 
 
 # ── 싱글턴 인스턴스 ───────────────────────────────────────────────────────
