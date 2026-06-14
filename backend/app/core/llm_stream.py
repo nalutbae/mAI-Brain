@@ -125,11 +125,20 @@ class LLMStreamClient:
 
         chain = self._get_provider_chain()
         last_error: Optional[Exception] = None
+        logger.info("LLM 스트리밍 시작: %d개 프로바이더", len(chain))
 
         for provider_config in chain:
             try:
+                logger.info(
+                    "LLM 스트리밍 시도: provider=%s, base_url=%s",
+                    provider_config.provider.value,
+                    provider_config.get_effective_base_url()[:50] if provider_config.get_effective_base_url() else "N/A",
+                )
+                chunk_count = 0
                 async for chunk in self._stream_provider(provider_config, messages, max_tokens):
+                    chunk_count += 1
                     yield chunk
+                logger.info("LLM 스트리밍 완료: provider=%s, %d 청크", provider_config.provider.value, chunk_count)
                 return  # 성공 → 종료
             except Exception as exc:
                 last_error = exc
@@ -251,6 +260,10 @@ class LLMStreamClient:
         {"message":{"role":"assistant","content":"..."},"done":false}
         ...
         {"message":{"role":"assistant","content":""},"done":true}
+
+        thinking 지원 모델(glm-5.1 등)은 content와 함께 thinking 필드를 포함:
+        {"message":{"role":"assistant","content":"","thinking":"..."},"done":false}
+        최종 응답에서 content에 실제 답변이, thinking에 추론 과정이 들어감.
         """
         base_url = provider.get_effective_base_url().rstrip("/")
         model = provider.get_effective_model()
@@ -268,6 +281,7 @@ class LLMStreamClient:
             "model": model,
             "messages": messages,
             "stream": True,
+            "think": False,  # thinking 모드 비활성화 — content에 답변만 포함
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
@@ -277,6 +291,9 @@ class LLMStreamClient:
             "Ollama 네이티브 스트리밍 요청: url=%s, model=%s, msg_count=%d, api_key=%s",
             base_url, model, len(messages), "***" if api_key else "(empty)",
         )
+
+        thinking_chunks: list[str] = []
+        content_chunks: list[str] = []
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(self._timeout, read=180.0)) as client:
             async with client.stream("POST", base_url, headers=headers, json=payload) as response:
@@ -298,10 +315,39 @@ class LLMStreamClient:
                         continue
                     try:
                         chunk_data = json.loads(line)
-                        # Ollama 네이티브: {"message": {"content": "..."}}
-                        content = chunk_data.get("message", {}).get("content", "")
+                        msg = chunk_data.get("message", {})
+                        content = msg.get("content", "")
+                        thinking = msg.get("thinking", "")
+                        is_done = chunk_data.get("done", False)
+
+                        # content가 있으면 즉시 yield
                         if content:
+                            content_chunks.append(content)
                             yield content
+
+                        # thinking 청크 수집 (최종 응답에서 content가 비어있을 때 폴백)
+                        if thinking:
+                            thinking_chunks.append(thinking)
+
+                        # done 시그널: content가 전혀 없었다면 thinking을 폴백으로 사용
+                        if is_done and not content_chunks and thinking_chunks:
+                            thinking_text = "".join(thinking_chunks)
+                            if thinking_text:
+                                logger.info(
+                                    "Ollama 스트리밍: content 비어있음, thinking을 폴백으로 사용 (%d chars)",
+                                    len(thinking_text),
+                                )
+                                yield thinking_text
+
+                        # 디버그: 처음 5개 청크 로깅
+                        if len(content_chunks) + len(thinking_chunks) <= 5:
+                            logger.debug(
+                                "Ollama 스트리밍 청크 #%d: content=%r, thinking=%r, done=%s",
+                                len(content_chunks) + len(thinking_chunks),
+                                content[:50] if content else "",
+                                thinking[:50] if thinking else "",
+                                is_done,
+                            )
                     except json.JSONDecodeError:
                         continue
 

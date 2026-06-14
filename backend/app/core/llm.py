@@ -372,6 +372,7 @@ class LLMClient:
                     "model": model,
                     "messages": messages,
                     "stream": False,
+                    "think": False,  # thinking 모드 비활성화
                     "options": {
                         "temperature": temperature,
                         "num_predict": max_tokens,

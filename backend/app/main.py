@@ -13,6 +13,9 @@ from scalar_fastapi import get_scalar_api_reference
 
 from app.config import get_settings
 
+# INFO 레벨 로깅 설정 (스트리밍 디버그 등)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
