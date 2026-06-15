@@ -59,6 +59,7 @@ interface QuickReplyGroup {
 interface ServiceChatConfig {
   branding: ServiceChatBranding;
   greeting: ServiceChatGreeting;
+  workspace?: string;
   faq: ServiceChatFaq;
   quick_replies: { groups: QuickReplyGroup[] };
   disclaimer: string;
@@ -191,6 +192,7 @@ export default function ServiceChatPage() {
             mode: "fact" as ChatMode,
             session_id: sessionId || undefined,
             service_mode: true,
+            workspace_id: config?.workspace || undefined,
           },
           {
             onToken: (token: string) => {
@@ -272,6 +274,7 @@ export default function ServiceChatPage() {
           mode: "fact" as ChatMode,
           session_id: sessionId || undefined,
           service_mode: true,
+          workspace_id: config?.workspace || undefined,
         });
         setMessages((prev) => {
           const updated = [...prev];

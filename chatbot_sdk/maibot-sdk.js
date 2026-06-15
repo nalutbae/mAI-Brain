@@ -154,6 +154,7 @@
         mode: "fact",
         session_id: sessionId || undefined,
         service_mode: true,
+        workspace_id: config?.workspace || undefined,
       });
 
       const resp = await fetch(settings.apiBase + "/api/chat/stream", {

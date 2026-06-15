@@ -99,12 +99,14 @@ async def stream_chat(request: ChatRequest, req: Request):
     # 2. 워크스페이스 컬렉션 결정
     collection_name = None
     workspace_doc_ids: list[str] | None = None
-    if request.workspace_id:
+    # "전체" 또는 빈 문자열이면 모든 워크스페이스에서 검색 (workspace_id=None)
+    effective_workspace_id = request.workspace_id if request.workspace_id and request.workspace_id != "전체" else None
+    if effective_workspace_id:
         from app.core.workspace import get_workspace_store
         ws_store = get_workspace_store()
-        collection_name = ws_store.get_collection_name(request.workspace_id)
+        collection_name = ws_store.get_collection_name(effective_workspace_id)
         # 워크스페이스에 할당된 문서 ID 목록 (폴백 필터링용)
-        workspace = ws_store.get_workspace(request.workspace_id)
+        workspace = ws_store.get_workspace(effective_workspace_id)
         if workspace:
             workspace_doc_ids = workspace.document_ids
 

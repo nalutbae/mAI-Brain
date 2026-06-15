@@ -19,6 +19,9 @@ import {
   updateOcrConfig,
   getServiceChatConfig,
   updateServiceChatConfig,
+  getServiceChatFullConfig,
+  updateServiceChatFullConfig,
+  listWorkspaces,
   type LLMProvider,
   type LLMProviderConfig,
   type EmbeddingProviderConfig,
@@ -129,6 +132,8 @@ export default function SettingsContent() {
   const [serviceChatShowSources, setServiceChatShowSources] = useState(false);
   const [serviceChatSaving, setServiceChatSaving] = useState(false);
   const [serviceChatMessage, setServiceChatMessage] = useState("");
+  const [serviceChatWorkspace, setServiceChatWorkspace] = useState("전체");
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
 
   // ── Load data ────────────────────────────────────────────────────────
   useEffect(() => {
@@ -138,23 +143,37 @@ export default function SettingsContent() {
   async function loadData() {
     setLlmLoading(true);
     setEmbLoading(true);
+
+    // ── LLM/임베딩 프로바이더 (개별 try/catch — 하나 실패해도 다른 것은 로드) ──
     try {
-      const [llmRes, availRes, embRes, availEmbRes, rerankerRes, ocrRes, serviceChatRes] = await Promise.all([
-        listLLMProviders(),
-        listAvailableLLMProviders(),
-        listEmbeddingProviders(),
-        listAvailableEmbeddingProviders(),
-        getRerankerConfig(),
-        getOcrConfig(),
-        getServiceChatConfig(),
-      ]);
+      const llmRes = await listLLMProviders();
       setProviders(llmRes.providers);
       setActiveId(llmRes.active_id);
+    } catch (e) { console.error("LLM 프로바이더 로드 실패:", e); }
+
+    try {
+      const availRes = await listAvailableLLMProviders();
       setAvailableLLM(availRes.providers);
+    } catch (e) { console.error("LLM 가용 프로바이더 로드 실패:", e); }
+
+    try {
+      const embRes = await listEmbeddingProviders();
       setEmbProviders(embRes.providers);
       setEmbActiveId(embRes.active_id);
+    } catch (e) { console.error("임베딩 프로바이더 로드 실패:", e); }
+
+    try {
+      const availEmbRes = await listAvailableEmbeddingProviders();
       setAvailableEmb(availEmbRes.providers);
+    } catch (e) { console.error("임베딩 가용 프로바이더 로드 실패:", e); }
+
+    try {
+      const rerankerRes = await getRerankerConfig();
       setReranker(rerankerRes);
+    } catch (e) { console.error("리랭커 설정 로드 실패:", e); }
+
+    try {
+      const ocrRes = await getOcrConfig();
       setOcr({
         provider: ocrRes.provider as "surya" | "tesseract" | "none",
         languages: ocrRes.languages,
@@ -162,13 +181,25 @@ export default function SettingsContent() {
         maxPages: ocrRes.max_pages,
         enableTable: ocrRes.enable_table,
       });
+    } catch (e) { console.error("OCR 설정 로드 실패:", e); }
+
+    try {
+      const serviceChatRes = await getServiceChatConfig();
       setServiceChatShowSources(serviceChatRes.show_sources);
-    } catch (e) {
-      console.error("설정 로드 실패:", e);
-    } finally {
-      setLlmLoading(false);
-      setEmbLoading(false);
-    }
+    } catch (e) { console.error("서비스 챗봇 설정 로드 실패:", e); }
+
+    try {
+      const workspaceRes = await listWorkspaces();
+      setWorkspaces(workspaceRes.workspaces.map((w: { id: string; name: string }) => ({ id: w.id, name: w.name })));
+    } catch (e) { console.error("워크스페이스 목록 로드 실패:", e); }
+
+    try {
+      const fullConfig = await getServiceChatFullConfig<{ workspace?: string }>();
+      if (fullConfig.workspace) setServiceChatWorkspace(fullConfig.workspace);
+    } catch { /* 전체 설정 로드 실패 시 기본값 유지 */ }
+
+    setLlmLoading(false);
+    setEmbLoading(false);
   }
 
   // ── LLM Provider actions ─────────────────────────────────────────────
@@ -308,10 +339,13 @@ export default function SettingsContent() {
     setServiceChatSaving(true);
     setServiceChatMessage("");
     try {
-      const result = await updateServiceChatConfig({
-        show_sources: serviceChatShowSources,
-      });
-      setServiceChatShowSources(result.show_sources);
+      const [showSourcesResult] = await Promise.all([
+        updateServiceChatConfig({
+          show_sources: serviceChatShowSources,
+        }),
+        updateServiceChatFullConfig({ workspace: serviceChatWorkspace }),
+      ]);
+      setServiceChatShowSources(showSourcesResult.show_sources);
       setServiceChatMessage("✅ 서비스 챗봇 설정 저장 완료");
       setTimeout(() => setServiceChatMessage(""), 5000);
     } catch (e: any) {
@@ -986,6 +1020,26 @@ export default function SettingsContent() {
                 }`}
               />
             </button>
+          </div>
+
+          {/* 워크스페이스 선택 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">검색 워크스페이스</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                서비스 챗봇이 검색할 워크스페이스를 선택합니다. &apos;전체&apos; 선택 시 모든 워크스페이스에서 검색합니다.
+              </p>
+            </div>
+            <select
+              value={serviceChatWorkspace}
+              onChange={(e) => setServiceChatWorkspace(e.target.value)}
+              className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[160px]"
+            >
+              <option value="전체">전체 (모든 워크스페이스)</option>
+              {workspaces.map((ws) => (
+                <option key={ws.id} value={ws.id}>{ws.name}</option>
+              ))}
+            </select>
           </div>
 
           {/* 설명 카드 */}

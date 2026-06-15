@@ -102,6 +102,8 @@ class ServiceChatConfig(BaseModel):
     meta: ServiceChatMeta = ServiceChatMeta()
     branding: ServiceChatBranding = ServiceChatBranding()
     greeting: ServiceChatGreeting = ServiceChatGreeting()
+    workspace: str = "전체"
+    """RAG 검색 워크스페이스. '전체'면 모든 워크스페이스에서 검색, 특정 ID면 해당 워크스페이스만 검색"""
     system_prompt: ServiceChatSystemPrompt = ServiceChatSystemPrompt()
     faq: ServiceChatFaq = ServiceChatFaq()
     quick_replies: ServiceChatQuickReplies = ServiceChatQuickReplies()
