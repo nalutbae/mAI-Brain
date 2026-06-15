@@ -66,30 +66,24 @@ class LLMStreamClient:
         chat_history: Optional[list[dict[str, str]]] = None,
         reasoning_strength: Optional[ReasoningStrength] = None,
         workspace_id: Optional[str] = None,
+        service_mode: bool = False,
     ) -> list[dict[str, str]]:
-        """기존 LLMClient와 동일한 메시지 구성 로직."""
-        messages = [
-            {"role": "system", "content": get_base_system_prompt(workspace_id)},
-        ]
-
-        mode_instruction = get_system_prompt_text(mode=mode, workspace_id=workspace_id)
-        if mode_instruction:
-            if reasoning_strength:
-                if mode == ChatMode.REASONING:
-                    si = _get_reasoning_instruction(reasoning_strength)
-                elif mode == ChatMode.COLUMN:
-                    si = _get_column_strength_instruction(reasoning_strength)
-                else:
-                    si = ""
-                if si:
-                    mode_instruction = mode_instruction + "\n\n" + si
-            messages.append({"role": "system", "content": mode_instruction})
-
-        if chat_history:
-            messages.extend(chat_history)
-
-        messages.append({"role": "user", "content": user_message})
-        return messages
+        """기존 LLMClient와 동일한 메시지 구성 로직.
+        
+        service_mode=True 시 서비스 챗봇 전용 프롬프트를 사용합니다.
+        """
+        from app.core.llm import LLMClient
+        llm = LLMClient()
+        
+        # LLMClient._build_messages에 위임
+        return llm._build_messages(
+            mode=mode,
+            user_message=user_message,
+            chat_history=chat_history,
+            reasoning_strength=reasoning_strength,
+            workspace_id=workspace_id,
+            service_mode=service_mode,
+        )
 
     # ------------------------------------------------------------------- #
     # 공개 스트리밍 메서드
@@ -103,6 +97,7 @@ class LLMStreamClient:
         chat_history: Optional[list[dict[str, str]]] = None,
         reasoning_strength: Optional[ReasoningStrength] = None,
         workspace_id: Optional[str] = None,
+        service_mode: bool = False,
     ) -> AsyncGenerator[str, None]:
         """검색 결과를 바탕으로 LLM 답변을 스트리밍으로 생성.
 
@@ -114,11 +109,11 @@ class LLMStreamClient:
         # 컨텍스트 텍스트 구성 (기존 LLMClient 재사용)
         llm = LLMClient()
         context_text = llm._build_context(contexts)
-        user_message = llm._build_user_prompt(query, context_text, mode)
+        user_message = llm._build_user_prompt(query, context_text, mode, service_mode=service_mode)
 
         messages = self._build_messages(
             mode, user_message, chat_history, reasoning_strength,
-            workspace_id=workspace_id,
+            workspace_id=workspace_id, service_mode=service_mode,
         )
 
         max_tokens = 3072 if mode == ChatMode.REASONING else 2048

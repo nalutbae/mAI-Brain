@@ -248,6 +248,7 @@ class LLMClient:
         chat_history: Optional[list[dict[str, str]]] = None,
         reasoning_strength: Optional[ReasoningStrength] = None,
         workspace_id: Optional[str] = None,
+        service_mode: bool = False,
     ) -> str:
         """검색 결과를 바탕으로 LLM 답변 생성.
 
@@ -258,6 +259,7 @@ class LLMClient:
             chat_history: 이전 대화 기록 [{"role": "user/assistant", "content": "..."}]
             reasoning_strength: 추론 강도 필터 (추론 모드에서만 사용)
             workspace_id: 워크스페이스 ID (커스텀 프롬프트 조회용)
+            service_mode: 서비스 챗봇 모드 (인용 마커/출처 생략, 친근한 문체)
 
         Returns:
             AI 답변 (한국어)
@@ -266,12 +268,12 @@ class LLMClient:
         context_text = self._build_context(contexts)
 
         # 사용자 프롬프트 구성
-        user_message = self._build_user_prompt(query, context_text, mode)
+        user_message = self._build_user_prompt(query, context_text, mode, service_mode=service_mode)
 
         # 메시지 시퀀스 구성
         messages = self._build_messages(
             mode, user_message, chat_history, reasoning_strength,
-            workspace_id=workspace_id,
+            workspace_id=workspace_id, service_mode=service_mode,
         )
 
         # 추론 모드는 더 긴 응답이 필요하므로 max_tokens 상향
@@ -580,16 +582,74 @@ class LLMClient:
 
         return "\n".join(parts)
 
+    # 서비스 챗봇 모드용 시스템 프롬프트 (출처/인용 없이 친근한 문체)
+    SERVICE_SYSTEM_PROMPT = """\
+당신은 친근하고 도움이 되는 AI 상담사입니다.
+
+규칙:
+1. 항상 한국어로 자연스럽고 친근하게 답변하라. "~해요", "~습니다" 등 정중하면서도 부드러운 말투를 사용하라.
+2. "제공된 문서", "검색된 문서", "참고 문서" 등 문서 검색 시스템의 내부 용어를 노출하지 마라.
+3. 출처나 인용 번호([[N]] 등)를 표시하지 마라. 마치 자신이 알고 있는 지식인 것처럼 자연스럽게 답변하라.
+4. 신뢰할 수 있는 정보만 답변하라. 모르는 정보에는 솔직하게 "확인이 필요한 부분이에요"라고 안내하라.
+5. 전문 용어는 가능하면 쉬운 말로 풀어서 설명하라.
+6. 필요시 핵심 포인트를 번호로 정리하여 가독성을 높여라.\
+"""
+
+    SERVICE_MODE_INSTRUCTIONS: dict[ChatMode, str] = {
+        ChatMode.FACT: """\
+[서비스 상담 모드 — 팩트 조회]
+- 정확한 사실을 친근하게 안내하라.
+- "문서에 따르면" 등의 표현 대신 자연스럽게 답변하라.
+- 출처 번호나 인용 마커는 절대 표시하지 마라.
+- 핵심 내용을 먼저 간단히 답변하고, 필요시 추가 설명을 제공하라.""",
+
+        ChatMode.SUMMARY: """\
+[서비스 상담 모드 — 요약]
+- 여러 정보를 종합하여 이해하기 쉽게 요약하라.
+- 번호 매기기로 핵심 포인트를 정리하라.
+- 출처나 인용은 표시하지 마라.
+- 핵심부터 먼저 제시하라.""",
+
+        ChatMode.COLUMN: """\
+[서비스 상담 모드 — 안내]
+- 안내에 필요한 정보를 정돈하여 서술하라.
+- 서론-본론-결론 구조로 작성하되, 친근한 어조를 유지하라.
+- 출처나 인용은 표시하지 마라.""",
+
+        ChatMode.REASONING: """\
+[서비스 상담 모드 — 추론 안내]
+- 정보를 바탕으로 논리적인 결론을 도출하라.
+- "추론"이라는 단어 대신 "살펴보면", "고려해보면" 등 자연스러운 표현을 사용하라.
+- 출처나 인용은 표시하지 마라.
+- 결론을 먼저 제시하고 그 이유를 설명하라.""",
+
+        ChatMode.CREATIVE: """\
+[서비스 상담 모드 — 창의적 대화]
+- 친근하고 창의적으로 대화하라.
+- 출처나 인용은 표시하지 마라.
+- 이전 대화 맥락을 자연스럽게 이어가라.""",
+    }
+
     def _build_user_prompt(
         self, query: str, context_text: str, mode: ChatMode,
+        service_mode: bool = False,
     ) -> str:
         """사용자 메시지 구성.
 
         creative 모드는 검색 결과 없이 질문만 전달.
         나머지 모드는 문서 참고 프롬프트 + 인용 마커 지시 포함.
+        service_mode=True 시 인용 마커 없이 친근한 프롬프트 사용.
         """
         if mode == ChatMode.CREATIVE:
             return query
+        if service_mode:
+            return f"""다음 정보를 참고하여 질문에 답변해 주세요. 답변은 자연스럽고 친근하게 작성하며, 출처나 인용 번호는 표시하지 마세요. "제공된 문서", "참고 문서" 등의 표현 대신 마치 직접 아는 것처럼 자연스럽게 설명해 주세요.
+
+[참고 정보]
+{context_text}
+
+[질문]
+{query}"""
         return f"""다음 문서를 참고하여 질문에 답변하라. 답변에서 문서를 인용할 때는 반드시 [[N]] 형식의 인용 마커를 사용하라. N은 문서 번호이다.
 
 [참고 문서]
@@ -605,30 +665,41 @@ class LLMClient:
         chat_history: Optional[list[dict[str, str]]] = None,
         reasoning_strength: Optional[ReasoningStrength] = None,
         workspace_id: Optional[str] = None,
+        service_mode: bool = False,
     ) -> list[dict[str, str]]:
-        """OpenAI Chat API 메시지 시퀀스 구성."""
-        messages = [
-            {"role": "system", "content": get_base_system_prompt(workspace_id)},
-        ]
-
-        mode_instruction = get_system_prompt_text(mode=mode, workspace_id=workspace_id)
-        if mode_instruction:
-            if reasoning_strength:
-                if mode == ChatMode.REASONING:
-                    si = _get_reasoning_instruction(reasoning_strength)
-                elif mode == ChatMode.COLUMN:
-                    si = _get_column_strength_instruction(reasoning_strength)
-                else:
-                    si = ""
-                if si:
-                    mode_instruction = mode_instruction + "\n\n" + si
-            messages.append({"role": "system", "content": mode_instruction})
+        """OpenAI Chat API 메시지 시퀀스 구성.
+        
+        service_mode=True 시 서비스 챗봇 전용 프롬프트를 사용합니다.
+        """
+        # 서비스 모드: 전용 시스템 프롬프트 사용
+        if service_mode:
+            messages = [
+                {"role": "system", "content": self.SERVICE_SYSTEM_PROMPT},
+            ]
+            mode_instruction = self.SERVICE_MODE_INSTRUCTIONS.get(mode, "")
+            if mode_instruction:
+                messages.append({"role": "system", "content": mode_instruction})
+        else:
+            messages = [
+                {"role": "system", "content": get_base_system_prompt(workspace_id)},
+            ]
+            mode_instruction = get_system_prompt_text(mode=mode, workspace_id=workspace_id)
+            if mode_instruction:
+                if reasoning_strength:
+                    if mode == ChatMode.REASONING:
+                        si = _get_reasoning_instruction(reasoning_strength)
+                    elif mode == ChatMode.COLUMN:
+                        si = _get_column_strength_instruction(reasoning_strength)
+                    else:
+                        si = ""
+                    if si:
+                        mode_instruction = mode_instruction + "\n\n" + si
+                messages.append({"role": "system", "content": mode_instruction})
 
         if chat_history:
             messages.extend(chat_history)
 
         messages.append({"role": "user", "content": user_message})
-
         return messages
 
 

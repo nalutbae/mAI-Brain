@@ -1,6 +1,10 @@
 "use client";
 
 import { useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeHighlight from "rehype-highlight";
 import type {
   ConflictType,
   DocumentConflict,
@@ -311,8 +315,13 @@ export default function CrossReasoningPage() {
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
                 종합 분석
               </h3>
-              <div className="prose dark:prose-invert max-w-none whitespace-pre-wrap text-gray-800 dark:text-gray-200">
-                {answer}
+              <div className="markdown-body text-sm leading-relaxed">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeRaw, rehypeHighlight]}
+                >
+                  {answer}
+                </ReactMarkdown>
               </div>
             </div>
           )}

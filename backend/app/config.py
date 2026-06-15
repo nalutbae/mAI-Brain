@@ -126,6 +126,9 @@ class Settings(BaseSettings):
     app_name: str = "mAI-Brain"
     debug: bool = False
 
+    # 서비스 챗봇 설정
+    service_chat_show_sources: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

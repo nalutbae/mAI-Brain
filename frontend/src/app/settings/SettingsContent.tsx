@@ -17,6 +17,8 @@ import {
   updateRerankerConfig,
   getOcrConfig,
   updateOcrConfig,
+  getServiceChatConfig,
+  updateServiceChatConfig,
   type LLMProvider,
   type LLMProviderConfig,
   type EmbeddingProviderConfig,
@@ -123,6 +125,11 @@ export default function SettingsContent() {
   const [ocrSaving, setOcrSaving] = useState(false);
   const [ocrMessage, setOcrMessage] = useState("");
 
+  // ── 서비스 챗봇 ──────────────────────────────────────────────────────
+  const [serviceChatShowSources, setServiceChatShowSources] = useState(false);
+  const [serviceChatSaving, setServiceChatSaving] = useState(false);
+  const [serviceChatMessage, setServiceChatMessage] = useState("");
+
   // ── Load data ────────────────────────────────────────────────────────
   useEffect(() => {
     loadData();
@@ -132,13 +139,14 @@ export default function SettingsContent() {
     setLlmLoading(true);
     setEmbLoading(true);
     try {
-      const [llmRes, availRes, embRes, availEmbRes, rerankerRes, ocrRes] = await Promise.all([
+      const [llmRes, availRes, embRes, availEmbRes, rerankerRes, ocrRes, serviceChatRes] = await Promise.all([
         listLLMProviders(),
         listAvailableLLMProviders(),
         listEmbeddingProviders(),
         listAvailableEmbeddingProviders(),
         getRerankerConfig(),
         getOcrConfig(),
+        getServiceChatConfig(),
       ]);
       setProviders(llmRes.providers);
       setActiveId(llmRes.active_id);
@@ -154,6 +162,7 @@ export default function SettingsContent() {
         maxPages: ocrRes.max_pages,
         enableTable: ocrRes.enable_table,
       });
+      setServiceChatShowSources(serviceChatRes.show_sources);
     } catch (e) {
       console.error("설정 로드 실패:", e);
     } finally {
@@ -291,6 +300,24 @@ export default function SettingsContent() {
     if (defaults) {
       setTestBaseUrl(defaults.default_base_url || "");
       setTestModel(defaults.default_model || "");
+    }
+  }
+
+  // ── 서비스 챗봇 설정 저장 ────────────────────────────────────────────
+  async function handleSaveServiceChat() {
+    setServiceChatSaving(true);
+    setServiceChatMessage("");
+    try {
+      const result = await updateServiceChatConfig({
+        show_sources: serviceChatShowSources,
+      });
+      setServiceChatShowSources(result.show_sources);
+      setServiceChatMessage("✅ 서비스 챗봇 설정 저장 완료");
+      setTimeout(() => setServiceChatMessage(""), 5000);
+    } catch (e: any) {
+      setServiceChatMessage("❌ 저장 실패: " + e.message);
+    } finally {
+      setServiceChatSaving(false);
     }
   }
 
@@ -928,6 +955,63 @@ export default function SettingsContent() {
             {ocrMessage && (
               <span className={`text-sm ${ocrMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
                 {ocrMessage}
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ── 서비스 챗봇 설정 ─────────────────────────────────────────────── */}
+      <section>
+        <h2 className="text-lg sm:text-xl font-semibold mb-4">🤖 서비스 챗봇</h2>
+        <div className="p-4 rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 space-y-4">
+          {/* 출처/인용 표시 토글 */}
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="font-medium">출처 및 인용 표시</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
+                서비스 챗봇에서 문서 출처와 인용 뱃지를 표시합니다. 비활성화 시 친근한 문체로만 응답합니다.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setServiceChatShowSources(!serviceChatShowSources)}
+              className={`relative w-12 h-6 rounded-full transition-colors ${
+                serviceChatShowSources ? "bg-blue-600" : "bg-gray-300 dark:bg-gray-600"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                  serviceChatShowSources ? "translate-x-6" : "translate-x-1"
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* 설명 카드 */}
+          <div className={`p-3 rounded-lg text-sm ${
+            serviceChatShowSources
+              ? "bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-700 text-blue-800 dark:text-blue-200"
+              : "bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-700 text-green-800 dark:text-green-200"
+          }`}>
+            {serviceChatShowSources ? (
+              <>📄 <strong>표시 모드</strong> — 출처와 인용 정보가 답변과 함께 표시됩니다. 전문적인 상담용으로 적합합니다.</>
+            ) : (
+              <>💬 <strong>친근 모드</strong> — 출처와 인용 없이 자연스럽고 친근한 문체로 답변합니다. 일반 고객 응대에 적합합니다.</>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleSaveServiceChat}
+              disabled={serviceChatSaving}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm disabled:opacity-50 min-h-[44px]"
+            >
+              {serviceChatSaving ? "저장 중..." : "💾 서비스 챗봇 설정 저장"}
+            </button>
+            {serviceChatMessage && (
+              <span className={`text-sm ${serviceChatMessage.startsWith("✅") ? "text-green-600" : "text-red-600"}`}>
+                {serviceChatMessage}
               </span>
             )}
           </div>

@@ -1,6 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeHighlight from "rehype-highlight";
 import MessageBubble from "./MessageBubble";
 import ModeSelector from "./ModeSelector";
 import VoiceInput from "./VoiceInput";
@@ -853,9 +857,14 @@ export default function ChatInterface({ sessionId, workspaceId, onSessionStart }
                     <summary className="cursor-pointer font-medium text-gray-700 dark:text-gray-300">
                       종합 요약
                     </summary>
-                    <p className="mt-1 text-xs text-gray-600 dark:text-gray-400 whitespace-pre-wrap">
-                      {crossAnalysis.synthesis}
-                    </p>
+                    <div className="markdown-body mt-1 text-xs">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[rehypeRaw, rehypeHighlight]}
+                      >
+                        {crossAnalysis.synthesis}
+                      </ReactMarkdown>
+                    </div>
                   </details>
                 )}
               </div>

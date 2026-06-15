@@ -15,7 +15,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException
 
-from app.config import ChatMode
+from app.config import ChatMode, get_settings
 from app.core.agent_runner import detect_agent_mode, run_agent
 from app.core.context_manager import get_context_manager
 from app.core.llm import get_llm_client
@@ -176,6 +176,7 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
             chat_history=chat_history,
             reasoning_strength=request.reasoning_strength,
             workspace_id=request.workspace_id,
+            service_mode=request.service_mode,
         )
     except Exception as exc:
         logger.error("LLM 오류: %s", exc, exc_info=True)
@@ -216,13 +217,15 @@ async def _handle_normal_mode(request: ChatRequest, store) -> ChatResponse:
 
     # 6. 응답 반환
     # 인용 마커 파싱 — [[N]] → Citation 매핑
+    # 서비스 모드: 설정에 따라 출처/인용 노출 제어
     citations = None
-    if search_result and search_result.hits and not is_creative:
+    show_sources = not request.service_mode or get_settings().service_chat_show_sources
+    if search_result and search_result.hits and not is_creative and show_sources:
         citations = parse_citations(answer, search_result.hits)
 
     return ChatResponse(
         answer=answer,
-        sources=search_result.hits if search_result and search_result.hits else None,
+        sources=search_result.hits if search_result and search_result.hits and show_sources else None,
         citations=citations,
         mode=request.mode,
         session_id=session_id,

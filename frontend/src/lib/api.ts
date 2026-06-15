@@ -51,6 +51,7 @@ export interface ChatRequest {
   session_id?: string;
   reasoning_strength?: ReasoningStrength;
   workspace_id?: string;
+  service_mode?: boolean;
 }
 
 export interface ChatResponse {
@@ -1128,6 +1129,26 @@ export async function updateOcrConfig(data: {
   enable_table?: boolean;
 }): Promise<OcrConfig & { message: string }> {
   return fetchAPI("/api/settings/settings/ocr", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+// ── 서비스 챗봇 설정 ──────────────────────────────────────────────────
+
+export interface ServiceChatConfig {
+  show_sources: boolean;
+}
+
+export async function getServiceChatConfig(): Promise<ServiceChatConfig> {
+  const settings = await fetchAPI<{ service_chat: ServiceChatConfig }>("/api/settings");
+  return settings.service_chat;
+}
+
+export async function updateServiceChatConfig(data: {
+  show_sources?: boolean;
+}): Promise<ServiceChatConfig & { message: string }> {
+  return fetchAPI("/api/settings/settings/service-chat", {
     method: "PUT",
     body: JSON.stringify(data),
   });

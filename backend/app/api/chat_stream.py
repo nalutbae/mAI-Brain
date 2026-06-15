@@ -19,7 +19,7 @@ from typing import Optional
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 
-from app.config import ChatMode
+from app.config import ChatMode, get_settings
 from app.core.agent_runner import detect_agent_mode, run_agent
 from app.core.context_manager import get_context_manager
 from app.core.llm_stream import get_llm_stream_client
@@ -152,6 +152,9 @@ async def stream_chat(request: ChatRequest, req: Request):
     # 5. LLM 스트리밍 생성
     llm_stream = get_llm_stream_client()
 
+    # 서비스 모드: 설정에 따라 출처/인용 노출 제어
+    show_sources = not request.service_mode or get_settings().service_chat_show_sources
+
     async def event_stream():
         full_answer = ""
         try:
@@ -162,12 +165,14 @@ async def stream_chat(request: ChatRequest, req: Request):
                 chat_history=chat_history,
                 reasoning_strength=request.reasoning_strength,
                 workspace_id=request.workspace_id,
+                service_mode=request.service_mode,
             ):
                 full_answer += chunk
                 yield f"event: token\ndata: {json.dumps({'content': chunk}, ensure_ascii=False)}\n\n"
 
             # 6. 검색 출처 전송 (토큰 스트림 완료 후)
-            if search_result and search_result.hits:
+            # 서비스 모드: show_sources=False 시 출처/인용 이벤트 생략
+            if search_result and search_result.hits and show_sources:
                 sources_data = [
                     {
                         "text": h.text[:200],

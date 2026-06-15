@@ -55,7 +55,8 @@ export default function NavBar() {
 
   // 로그인한 사용자: role에 따라 메뉴 필터링
   const allLinks = [
-    { href: "/", label: "💬 채팅", active: pathname === "/", adminOnly: false },
+    { href: "/", label: "💬 채팅", active: pathname === "/" && !pathname.startsWith("/service-chat"), adminOnly: false },
+    { href: "/service-chat", label: "🤖 서비스 챗봇", active: pathname === "/service-chat", adminOnly: false },
     { href: "/admin/workspaces", label: "📁 워크스페이스", active: pathname === "/admin/workspaces", adminOnly: true },
     { href: "/cross-reasoning", label: "🔀 교차추론", active: pathname === "/cross-reasoning", adminOnly: false },
     { href: "/knowledge-graph", label: "🕸️ 지식그래프", active: pathname === "/knowledge-graph", adminOnly: false },

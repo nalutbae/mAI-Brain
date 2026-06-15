@@ -64,6 +64,10 @@ class ChatRequest(BaseModel):
         default=None,
         description="쿼리 확장 전략: multi_query, hyde, korean_synonyms, auto, none",
     )
+    service_mode: bool = Field(
+        default=False,
+        description="서비스 챗봇 모드: true 시 인용 마커/출처 생략, 친근한 문체로 응답",
+    )
 
 
 # --------------------------------------------------------------------------- #
