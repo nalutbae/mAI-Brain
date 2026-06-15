@@ -1136,21 +1136,39 @@ export async function updateOcrConfig(data: {
 
 // ── 서비스 챗봇 설정 ──────────────────────────────────────────────────
 
-export interface ServiceChatConfig {
+export interface ServiceChatShowSourcesConfig {
   show_sources: boolean;
 }
 
-export async function getServiceChatConfig(): Promise<ServiceChatConfig> {
-  const settings = await fetchAPI<{ service_chat: ServiceChatConfig }>("/api/settings");
+export async function getServiceChatConfig(): Promise<ServiceChatShowSourcesConfig> {
+  const settings = await fetchAPI<{ service_chat: ServiceChatShowSourcesConfig }>("/api/settings");
   return settings.service_chat;
 }
 
 export async function updateServiceChatConfig(data: {
   show_sources?: boolean;
-}): Promise<ServiceChatConfig & { message: string }> {
+}): Promise<ServiceChatShowSourcesConfig & { message: string }> {
   return fetchAPI("/api/settings/settings/service-chat", {
     method: "PUT",
     body: JSON.stringify(data),
+  });
+}
+
+// 서비스 챗봇 전체 설정 (branding, greeting, faq, quick_replies, system_prompt)
+export async function getServiceChatFullConfig<T = unknown>(): Promise<T> {
+  return fetchAPI("/api/service-chat/config");
+}
+
+export async function updateServiceChatFullConfig(data: Record<string, unknown>): Promise<unknown> {
+  return fetchAPI("/api/service-chat/config", {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function reloadServiceChatConfig(): Promise<{ message: string; config: unknown }> {
+  return fetchAPI("/api/service-chat/config/reload", {
+    method: "POST",
   });
 }
 

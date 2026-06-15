@@ -162,6 +162,10 @@ app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 # ── 관리자: 사용자 관리 ──────────────────────────────────────────────────────
 app.include_router(admin_users.router, prefix="/api/admin/users", tags=["admin-users"])
 
+# ── 서비스 챗봇 설정 ──────────────────────────────────────────────────────
+from app.api import service_chat
+app.include_router(service_chat.router, prefix="/api/service-chat", tags=["service-chat"])
+
 # ── 외부용 OpenAPI v1 (X-API-Key 인증 필요) ────────────────────────────────
 from app.api import v1
 app.include_router(v1.router, prefix="/api/v1", tags=["v1"])

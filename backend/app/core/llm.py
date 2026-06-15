@@ -638,18 +638,14 @@ class LLMClient:
 
         creative 모드는 검색 결과 없이 질문만 전달.
         나머지 모드는 문서 참고 프롬프트 + 인용 마커 지시 포함.
-        service_mode=True 시 인용 마커 없이 친근한 프롬프트 사용.
+        service_mode=True 시 설정 파일의 user_prompt_template 사용.
         """
         if mode == ChatMode.CREATIVE:
             return query
         if service_mode:
-            return f"""다음 정보를 참고하여 질문에 답변해 주세요. 답변은 자연스럽고 친근하게 작성하며, 출처나 인용 번호는 표시하지 마세요. "제공된 문서", "참고 문서" 등의 표현 대신 마치 직접 아는 것처럼 자연스럽게 설명해 주세요.
-
-[참고 정보]
-{context_text}
-
-[질문]
-{query}"""
+            from app.core.service_chat_config import get_service_chat_config_store
+            sc_store = get_service_chat_config_store()
+            return sc_store.build_user_prompt(context_text, query)
         return f"""다음 문서를 참고하여 질문에 답변하라. 답변에서 문서를 인용할 때는 반드시 [[N]] 형식의 인용 마커를 사용하라. N은 문서 번호이다.
 
 [참고 문서]
@@ -671,12 +667,14 @@ class LLMClient:
         
         service_mode=True 시 서비스 챗봇 전용 프롬프트를 사용합니다.
         """
-        # 서비스 모드: 전용 시스템 프롬프트 사용
+        # 서비스 모드: 설정 파일 기반 시스템 프롬프트 사용
         if service_mode:
+            from app.core.service_chat_config import get_service_chat_config_store
+            sc_store = get_service_chat_config_store()
             messages = [
-                {"role": "system", "content": self.SERVICE_SYSTEM_PROMPT},
+                {"role": "system", "content": sc_store.build_system_prompt()},
             ]
-            mode_instruction = self.SERVICE_MODE_INSTRUCTIONS.get(mode, "")
+            mode_instruction = sc_store.build_mode_instruction(mode.value)
             if mode_instruction:
                 messages.append({"role": "system", "content": mode_instruction})
         else:
