@@ -267,6 +267,14 @@
     popup = document.createElement("div");
     popup.className = "maibot-popup";
     popup.style.display = "none";
+    // position 설정에 따라 팝업 정렬 방향 결정
+    if (settings.position === "left") {
+      popup.style.left = "0";
+      popup.style.right = "auto";
+    } else {
+      popup.style.right = "0";
+      popup.style.left = "auto";
+    }
     popup.innerHTML = buildPopupHTML();
 
     container.appendChild(popup);
@@ -525,6 +533,7 @@
   flex-direction: column;
   position: absolute;
   bottom: 68px;
+  right: 0;
   width: 380px;
   max-width: calc(100vw - 48px);
   height: 560px;
