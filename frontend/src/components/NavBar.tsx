@@ -9,7 +9,7 @@ import ThemeToggle from "./ThemeToggle";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 // 관리자 전용 경로
-const ADMIN_PATHS = ["/admin", "/admin/api-keys", "/admin/chunking", "/admin/prompts", "/admin/users", "/admin/workspaces", "/admin/settings"];
+const ADMIN_PATHS = ["/admin", "/admin/api-keys", "/admin/chunking", "/admin/prompts", "/admin/users", "/admin/workspaces", "/admin/settings", "/admin/sdk-demo"];
 
 // 로그인 필요 경로 (모든 페이지)
 // 로그인 없이 접근 가능: /login, /api/v1 (외부 API)
@@ -68,6 +68,7 @@ export default function NavBar() {
     { href: "/evaluation", label: "📊 평가", active: pathname === "/evaluation", adminOnly: true },
     { href: "/feedback", label: "🔄 피드백", active: pathname === "/feedback", adminOnly: false },
     { href: "/admin/settings", label: "⚙️ 설정", active: pathname === "/admin/settings", adminOnly: true },
+    { href: "/admin/sdk-demo", label: "🧩 SDK 데모", active: pathname === "/admin/sdk-demo", adminOnly: true },
     { href: `${API_BASE_URL}/scalar`, label: "📖 API 문서", active: false, adminOnly: true, external: true },
   ];
 
